@@ -6,6 +6,7 @@ import (
 
 	"github.com/gogo/status"
 	"github.com/google/uuid"
+	"github.com/iancoleman/strcase"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
@@ -105,11 +106,21 @@ func CheckImmutableFieldsUpdate(msgReq interface{}, msgUpdate interface{}, immut
 }
 
 // CheckOutputOnlyFieldsUpdate removes output only fields from the input field mask
+// Important: if the paths in the input field mask are in `snake_case`, they will be converted to `CamelCase`
+// and be compared to the output only fields, the unfiltered paths will be stored in the the output field mask
+// in the original format.
+//
+// Example:
+// "f1" will be converted to "F1"
+// "f.a" will be converted to "FA"
+// "f.a_1.b_2" will be converted to "FA1B2"
 func CheckOutputOnlyFieldsUpdate(mask *fieldmaskpb.FieldMask, outputOnlyFields []string) (*fieldmaskpb.FieldMask, error) {
 	maskUpdated := new(fieldmaskpb.FieldMask)
 
 	for _, path := range mask.GetPaths() {
-		if !contains(outputOnlyFields, path) {
+		// Convert mask paths from snake_case to CamelCase
+		pathCamelCase := strcase.ToCamel(path)
+		if !contains(outputOnlyFields, pathCamelCase) {
 			maskUpdated.Paths = append(maskUpdated.Paths, path)
 		}
 	}
