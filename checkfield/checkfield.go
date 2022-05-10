@@ -13,6 +13,8 @@ import (
 )
 
 // CheckRequiredFieldsCreate implements follows https://google.aip.dev/203#required
+// The msg parameter is a Protobuf message instance
+// The requiredFields is a slice of field path with snake_case name
 func CheckRequiredFieldsCreate(msg interface{}, requiredFields []string) error {
 
 	var recurMsgCheck func(interface{}, []string, string) error
@@ -48,7 +50,7 @@ func CheckRequiredFieldsCreate(msg interface{}, requiredFields []string) error {
 		case reflect.Ptr:
 			if f.IsNil() {
 				return status.Errorf(codes.InvalidArgument, "required field path `%s` is not assigned", path)
-			} else if reflect.Indirect(reflect.ValueOf(f)).Kind() == reflect.Struct {
+			} else if reflect.ValueOf(f).Kind() == reflect.Struct {
 				if len(fieldNames) > 1 {
 					fieldNames = fieldNames[1:]
 					path = path + "." + fieldNames[0]
@@ -72,29 +74,50 @@ func CheckRequiredFieldsCreate(msg interface{}, requiredFields []string) error {
 }
 
 // CheckOutputOnlyFieldsCreate implements follows https://google.aip.dev/203#output-only
-// TODO Limitation: can't handle nested struct
+// The msg parameter is a Protobuf message instance
+// The requiredFields is a slice of field path with snake_case name
 func CheckOutputOnlyFieldsCreate(msg interface{}, outputOnlyFields []string) error {
-	for _, field := range outputOnlyFields {
-		f := reflect.Indirect(reflect.ValueOf(msg)).FieldByName(field)
+
+	var recurMsgCheck func(interface{}, []string, string) error
+
+	recurMsgCheck = func(m interface{}, fieldNames []string, path string) error {
+		fieldName := strcase.ToCamel(fieldNames[0])
+
+		f := reflect.ValueOf(m).Elem().FieldByName(fieldName)
 		switch f.Kind() {
+		case reflect.Invalid:
+			return status.Errorf(codes.InvalidArgument, "output-only field path `%s` is not found in the Protobuf message", path)
 		case reflect.Bool:
-			reflect.ValueOf(msg).Elem().FieldByName(field).SetBool(false)
+			f.SetBool(false)
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			reflect.ValueOf(msg).Elem().FieldByName(field).SetInt(0)
+			f.SetInt(0)
 		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			reflect.ValueOf(msg).Elem().FieldByName(field).SetUint(uint64(0))
+			f.SetUint(uint64(0))
 		case reflect.Float32, reflect.Float64:
-			reflect.ValueOf(msg).Elem().FieldByName(field).SetFloat(0)
+			f.SetFloat(0)
 		case reflect.String:
-			reflect.ValueOf(msg).Elem().FieldByName(field).SetString("")
+			f.SetString("")
 		case reflect.Ptr:
-			reflect.ValueOf(msg).Elem().FieldByName(field).Set(reflect.Zero(f.Type()))
-		case reflect.Struct:
-			if err := CheckOutputOnlyFieldsCreate(f, outputOnlyFields); err != nil {
-				return err
+			if len(fieldNames) > 1 && reflect.ValueOf(f).Kind() == reflect.Struct {
+				fieldNames = fieldNames[1:]
+				path = path + "." + fieldNames[0]
+				if err := recurMsgCheck(f.Interface(), fieldNames, path); err != nil {
+					return err
+				}
+			} else {
+				f.Set(reflect.Zero(f.Type()))
 			}
 		}
+		return nil
 	}
+
+	for _, path := range outputOnlyFields {
+		fieldNames := strings.Split(path, ".")
+		if err := recurMsgCheck(msg, fieldNames, fieldNames[0]); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

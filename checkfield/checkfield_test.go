@@ -129,6 +129,11 @@ func TestCheckRequiredFieldsCreate_RequiredNestedInValid(t *testing.T) {
 }
 
 func TestCheckOutputOnlyFieldsCreate_Valid(t *testing.T) {
+
+	type InnerStruct struct {
+		FieldStr string
+	}
+
 	type A struct {
 		FieldBool                bool
 		FieldInt                 int
@@ -147,8 +152,16 @@ func TestCheckOutputOnlyFieldsCreate_Valid(t *testing.T) {
 		FieldStrPtr              *string
 		FieldStrNotOutputOnly    string
 		FieldStrPtrNotOutputOnly *string
+		FieldNestedStruct        *InnerStruct
 	}
-	outputFields := []string{"FieldBool", "FieldInt", "FieldInt8", "FieldInt16", "FieldInt32", "FieldInt64", "FieldUint", "FieldUint8", "FieldUint16", "FieldUint32", "FieldUint64", "FieldFloat32", "FieldFloat64", "FieldStr", "FieldStrPtr"}
+	outputFields := []string{
+		"field_bool",
+		"field_int", "field_int8", "field_int16", "field_int32", "field_int64",
+		"field_uint", "field_uint8", "field_uint16", "field_uint32", "field_uint64",
+		"field_float32", "field_float64",
+		"field_str", "field_str_ptr",
+		"field_nested_struct.field_str",
+	}
 
 	nonEmptyStr := "field"
 	msg := &A{
@@ -169,7 +182,11 @@ func TestCheckOutputOnlyFieldsCreate_Valid(t *testing.T) {
 		FieldStrPtr:              &nonEmptyStr,
 		FieldStrNotOutputOnly:    "field_str_not_output_only",
 		FieldStrPtrNotOutputOnly: &nonEmptyStr,
+		FieldNestedStruct: &InnerStruct{
+			FieldStr: nonEmptyStr,
+		},
 	}
+
 	err := checkfield.CheckOutputOnlyFieldsCreate(msg, outputFields)
 	require.NoError(t, err)
 	require.Equal(t, &A{
@@ -190,6 +207,9 @@ func TestCheckOutputOnlyFieldsCreate_Valid(t *testing.T) {
 		FieldStrPtr:              nil,
 		FieldStrPtrNotOutputOnly: &nonEmptyStr,
 		FieldStrNotOutputOnly:    "field_str_not_output_only",
+		FieldNestedStruct: &InnerStruct{
+			FieldStr: "",
+		},
 	}, msg)
 }
 
