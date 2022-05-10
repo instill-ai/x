@@ -253,13 +253,13 @@ func TestCheckImmutableFieldsUpdate_UpdateImmutableFloat(t *testing.T) {
 
 func TestCheckOutputOnlyFieldsUpdate_Valid(t *testing.T) {
 	mask := new(fieldmaskpb.FieldMask)
-	mask.Paths = []string{"snake_case", "f_1", "f2", "f3.a", "f4.a_1.b_2"}
-	immutableFields := []string{"SnakeCase", "F1", "A", "F3A", "F4A1B2"}
-	maskUpdated, err := checkfield.CheckOutputOnlyFieldsUpdate(mask, immutableFields)
+	mask.Paths = []string{"snake_case", "a.b", "a.c", "a.b.c", "b.a"}
+	outputOnlyFields := []string{"SnakeCase", "A", "C"}
+	maskUpdated, err := checkfield.CheckOutputOnlyFieldsUpdate(mask, outputOnlyFields)
 	require.NoError(t, err)
 
 	maskExpected := new(fieldmaskpb.FieldMask)
-	maskExpected.Paths = []string{"f2"}
+	maskExpected.Paths = []string{"b.a"}
 
 	require.Equal(t, maskExpected, maskUpdated)
 }

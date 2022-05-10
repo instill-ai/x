@@ -3,6 +3,7 @@ package checkfield
 import (
 	"reflect"
 	"regexp"
+	"strings"
 
 	"github.com/gogo/status"
 	"github.com/google/uuid"
@@ -106,21 +107,18 @@ func CheckImmutableFieldsUpdate(msgReq interface{}, msgUpdate interface{}, immut
 }
 
 // CheckOutputOnlyFieldsUpdate removes output only fields from the input field mask
-// Important: if the paths in the input field mask are in `snake_case`, they will be converted to `CamelCase`
-// and be compared to the output only fields, the unfiltered paths will be stored in the the output field mask
-// in the original format.
 //
-// Example:
-// "f1" will be converted to "F1"
-// "f.a" will be converted to "FA"
-// "f.a_1.b_2" will be converted to "FA1B2"
+// output only fields are in `CamelCase` format and fields in the field mask are in `snake_case` format.
+// if a path in the input field mask is nested, such as `a.b`, and the output only fields includes `A`,
+// the path will be removed. The unfiltered paths will be stored in the the output field mask
+// in the original format.
 func CheckOutputOnlyFieldsUpdate(mask *fieldmaskpb.FieldMask, outputOnlyFields []string) (*fieldmaskpb.FieldMask, error) {
 	maskUpdated := new(fieldmaskpb.FieldMask)
 
 	for _, path := range mask.GetPaths() {
-		// Convert mask paths from snake_case to CamelCase
-		pathCamelCase := strcase.ToCamel(path)
-		if !contains(outputOnlyFields, pathCamelCase) {
+		// Get the root of the path
+		root := strings.Split(path, ".")[0]
+		if !contains(outputOnlyFields, strcase.ToCamel(root)) {
 			maskUpdated.Paths = append(maskUpdated.Paths, path)
 		}
 	}
