@@ -5,6 +5,7 @@ import (
 
 	"github.com/instill-ai/x/checkfield"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
 func TestCheckRequiredFields_NoError(t *testing.T) {
@@ -248,6 +249,20 @@ func TestCheckImmutableFields_UpdateImmutableFloat(t *testing.T) {
 
 	err := checkfield.CheckImmutableFields(msgReq, msgUpdate, immutableFields)
 	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = field `Field1` is immutable")
+}
+
+func TestCheckOutputOnlyFieldsUpdate_Valid(t *testing.T) {
+	mask := new(fieldmaskpb.FieldMask)
+	mask.Paths = []string{"F1", "F2", "F3.A", "F4.A.B", "F5.A.B"}
+
+	immutableFields := []string{"F1", "F3.A", "A", "F4.A.B"}
+	maskUpdated, err := checkfield.CheckOutputOnlyFieldsUpdate(mask, immutableFields)
+	require.NoError(t, err)
+
+	maskExpected := new(fieldmaskpb.FieldMask)
+	maskExpected.Paths = []string{"F2", "F5.A.B"}
+
+	require.Equal(t, maskExpected, maskUpdated)
 }
 
 func TestCheckResourceID_Valid(t *testing.T) {

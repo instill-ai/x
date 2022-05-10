@@ -8,6 +8,7 @@ import (
 	"github.com/gogo/status"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
 // CheckRequiredFields implements follows https://google.aip.dev/203#required
@@ -104,6 +105,18 @@ func CheckImmutableFields(msgReq interface{}, msgUpdate interface{}, immutableFi
 		}
 	}
 	return nil
+}
+
+// CheckOutputOnlyFieldsUpdate removes output only fields from the input field mask
+func CheckOutputOnlyFieldsUpdate(mask *fieldmaskpb.FieldMask, outputOnlyFields []string) (*fieldmaskpb.FieldMask, error) {
+	maskUpdated := new(fieldmaskpb.FieldMask)
+
+	for _, path := range mask.GetPaths() {
+		if !contains(outputOnlyFields, path) {
+			maskUpdated.Paths = append(maskUpdated.Paths, path)
+		}
+	}
+	return maskUpdated, nil
 }
 
 // CheckResourceID implements follows https://google.aip.dev/122#resource-id-segments
