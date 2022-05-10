@@ -1,7 +1,6 @@
 package checkfield
 
 import (
-	"fmt"
 	"reflect"
 	"regexp"
 
@@ -18,14 +17,12 @@ func CheckRequiredFieldsCreate(msg interface{}, requiredFields []string) error {
 		fieldName := reflect.Indirect(reflect.ValueOf(msg)).Type().Field(i).Name
 		if contains(requiredFields, fieldName) {
 			f := reflect.Indirect(reflect.ValueOf(msg)).FieldByName(fieldName)
-			fmt.Println("-----------field ", fieldName, f.Kind())
 			switch f.Kind() {
 			case reflect.String:
 				if f.String() == "" {
 					return status.Errorf(codes.InvalidArgument, "required field `%s` is not provided", fieldName)
 				}
 			case reflect.Ptr:
-				fmt.Println("==============Ptr", f)
 				if f.IsNil() {
 					return status.Errorf(codes.InvalidArgument, "required field `%s` is not provided", fieldName)
 				} else if reflect.Indirect(reflect.ValueOf(f)).Kind() == reflect.Struct {
