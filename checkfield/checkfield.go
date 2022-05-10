@@ -1,6 +1,7 @@
 package checkfield
 
 import (
+	"fmt"
 	"reflect"
 	"regexp"
 
@@ -10,20 +11,26 @@ import (
 )
 
 // CheckRequiredFields implements follows https://google.aip.dev/203#required
-// TODO limitation: can't handle number and pointer fields
+// TODO limitation: can't handle number and struct field
 func CheckRequiredFields(msg interface{}, requiredFields []string) error {
 	for i := 0; i < reflect.Indirect(reflect.ValueOf(msg)).NumField(); i++ {
 		fieldName := reflect.Indirect(reflect.ValueOf(msg)).Type().Field(i).Name
 		if contains(requiredFields, fieldName) {
 			f := reflect.Indirect(reflect.ValueOf(msg)).FieldByName(fieldName)
+			fmt.Println("-----------field ", fieldName, f.Kind())
 			switch f.Kind() {
 			case reflect.String:
 				if f.String() == "" {
 					return status.Errorf(codes.InvalidArgument, "required field `%s` is not provided", fieldName)
 				}
 			case reflect.Ptr:
+				fmt.Println("==============Ptr", f)
 				if f.IsNil() {
 					return status.Errorf(codes.InvalidArgument, "required field `%s` is not provided", fieldName)
+				} else if reflect.Indirect(reflect.ValueOf(f)).Kind() == reflect.Struct {
+					if err := CheckRequiredFields(f.Interface(), requiredFields); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -49,6 +56,10 @@ func CheckOutputOnlyFields(msg interface{}, outputOnlyFields []string) error {
 			reflect.ValueOf(msg).Elem().FieldByName(field).SetString("")
 		case reflect.Ptr:
 			reflect.ValueOf(msg).Elem().FieldByName(field).Set(reflect.Zero(f.Type()))
+		case reflect.Struct:
+			if err := CheckOutputOnlyFields(f, outputOnlyFields); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

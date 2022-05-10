@@ -60,6 +60,46 @@ func TestCheckRequiredFields_RequiredStructPtr(t *testing.T) {
 	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = required field `Field2` is not provided")
 }
 
+func TestCheckRequiredFields_RequiredNestedValid(t *testing.T) {
+	type A struct {
+		Field1 string
+		Field2 string
+	}
+	type B struct {
+		Field1 *A
+	}
+	requiredFields := []string{"Field1"}
+
+	msg := &B{
+		Field1: &A{
+			Field1: "field1_A",
+		},
+	}
+
+	err := checkfield.CheckRequiredFields(msg, requiredFields)
+	require.NoError(t, err)
+}
+
+func TestCheckRequiredFields_RequiredNestedInValid(t *testing.T) {
+	type A struct {
+		Field1 string
+		Field2 string
+	}
+	type B struct {
+		Field1 *A
+	}
+	requiredFields := []string{"Field1"}
+
+	msg := &B{
+		Field1: &A{
+			Field2: "field2_A",
+		},
+	}
+
+	err := checkfield.CheckRequiredFields(msg, requiredFields)
+	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = required field `Field1` is not provided")
+}
+
 func TestOutputOnlyFields_Valid(t *testing.T) {
 	type A struct {
 		FieldBool                bool
