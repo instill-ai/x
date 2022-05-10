@@ -5,45 +5,72 @@ import (
 
 	"github.com/instill-ai/x/checkfield"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
 func TestCheckRequiredFieldsCreate_NoError(t *testing.T) {
-	type A struct {
-		Field1 string
-	}
-	requiredFields := []string{"Field1"}
 
-	msg := &A{
-		Field1: "field1",
+	type A struct {
+		A struct {
+			B struct {
+				C string
+			}
+		}
+		D string
 	}
+
+	msg := new(A)
+	msg.A.B.C = "some nested field"
+	msg.D = "some nested field"
+
+	requiredFields := []string{"a.b.c", "d", "a.b", "a"}
 
 	err := checkfield.CheckRequiredFieldsCreate(msg, requiredFields)
 	require.NoError(t, err)
+
+}
+
+func TestCheckRequiredFieldsCreate_Error(t *testing.T) {
+
+	type A struct {
+		A struct {
+			B struct {
+				C string
+			}
+		}
+		D string
+	}
+
+	msg := new(A)
+
+	requiredFields := []string{"a.b.c", "d", "a.b", "a"}
+
+	err := checkfield.CheckRequiredFieldsCreate(msg, requiredFields)
+	require.Error(t, err)
+
 }
 
 func TestCheckRequiredFieldsCreate_RequiredString(t *testing.T) {
 	type A struct {
 		Field1 string
 	}
-	requiredFields := []string{"Field1"}
+	requiredFields := []string{"field1"}
 
 	msg := new(A)
 
 	err := checkfield.CheckRequiredFieldsCreate(msg, requiredFields)
-	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = required field `Field1` is not provided")
+	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = required field path `field1` is not assigned")
 }
 
 func TestCheckRequiredFieldsCreate_RequiredPtr(t *testing.T) {
 	type A struct {
 		Field1 *string
 	}
-	requiredFields := []string{"Field1"}
+	requiredFields := []string{"field1"}
 
 	msg := new(A)
 
 	err := checkfield.CheckRequiredFieldsCreate(msg, requiredFields)
-	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = required field `Field1` is not provided")
+	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = required field path `field1` is not assigned")
 }
 
 func TestCheckRequiredFieldsCreate_RequiredStructPtr(t *testing.T) {
@@ -53,12 +80,12 @@ func TestCheckRequiredFieldsCreate_RequiredStructPtr(t *testing.T) {
 	type B struct {
 		Field2 *A
 	}
-	requiredFields := []string{"Field2"}
+	requiredFields := []string{"field2"}
 
 	msg := new(B)
 
 	err := checkfield.CheckRequiredFieldsCreate(msg, requiredFields)
-	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = required field `Field2` is not provided")
+	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = required field path `field2` is not assigned")
 }
 
 func TestCheckRequiredFieldsCreate_RequiredNestedValid(t *testing.T) {
@@ -69,7 +96,7 @@ func TestCheckRequiredFieldsCreate_RequiredNestedValid(t *testing.T) {
 	type B struct {
 		Field1 *A
 	}
-	requiredFields := []string{"Field1"}
+	requiredFields := []string{"field1"}
 
 	msg := &B{
 		Field1: &A{
@@ -89,7 +116,7 @@ func TestCheckRequiredFieldsCreate_RequiredNestedInValid(t *testing.T) {
 	type B struct {
 		Field1 *A
 	}
-	requiredFields := []string{"Field1"}
+	requiredFields := []string{"field1.field1"}
 
 	msg := &B{
 		Field1: &A{
@@ -98,7 +125,7 @@ func TestCheckRequiredFieldsCreate_RequiredNestedInValid(t *testing.T) {
 	}
 
 	err := checkfield.CheckRequiredFieldsCreate(msg, requiredFields)
-	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = required field `Field1` is not provided")
+	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = required field path `field1.field1` is not assigned")
 }
 
 func TestCheckOutputOnlyFieldsCreate_Valid(t *testing.T) {
@@ -249,19 +276,6 @@ func TestCheckImmutableFieldsUpdate_UpdateImmutableFloat(t *testing.T) {
 
 	err := checkfield.CheckImmutableFieldsUpdate(msgReq, msgUpdate, immutableFields)
 	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = field `Field1` is immutable")
-}
-
-func TestCheckOutputOnlyFieldsUpdate_Valid(t *testing.T) {
-	mask := new(fieldmaskpb.FieldMask)
-	mask.Paths = []string{"snake_case", "a.b", "a.c", "a.b.c", "b.a"}
-	outputOnlyFields := []string{"SnakeCase", "A", "C"}
-	maskUpdated, err := checkfield.CheckOutputOnlyFieldsUpdate(mask, outputOnlyFields)
-	require.NoError(t, err)
-
-	maskExpected := new(fieldmaskpb.FieldMask)
-	maskExpected.Paths = []string{"b.a"}
-
-	require.Equal(t, maskExpected, maskUpdated)
 }
 
 func TestCheckResourceID_Valid(t *testing.T) {

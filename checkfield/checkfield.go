@@ -13,33 +13,66 @@ import (
 )
 
 // CheckRequiredFieldsCreate implements follows https://google.aip.dev/203#required
-// TODO limitation: can't handle number and struct field
 func CheckRequiredFieldsCreate(msg interface{}, requiredFields []string) error {
-	for i := 0; i < reflect.Indirect(reflect.ValueOf(msg)).NumField(); i++ {
-		fieldName := reflect.Indirect(reflect.ValueOf(msg)).Type().Field(i).Name
-		if contains(requiredFields, fieldName) {
-			f := reflect.Indirect(reflect.ValueOf(msg)).FieldByName(fieldName)
-			switch f.Kind() {
-			case reflect.String:
-				if f.String() == "" {
-					return status.Errorf(codes.InvalidArgument, "required field `%s` is not provided", fieldName)
+
+	var recurMsgCheck func(interface{}, []string, string) error
+	recurMsgCheck = func(m interface{}, fieldNames []string, path string) error {
+		f := reflect.Indirect(reflect.ValueOf(m)).FieldByName(strcase.ToCamel(fieldNames[0]))
+		switch f.Kind() {
+		case reflect.Invalid:
+			return status.Errorf(codes.InvalidArgument, "required field path `%s` is not found in the Protobuf message", path)
+		case reflect.String:
+			if f.String() == "" {
+				return status.Errorf(codes.InvalidArgument, "required field path `%s` is not assigned", path)
+			}
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			if f.Int() == 0 {
+				return status.Errorf(codes.InvalidArgument, "required field path `%s` is not assigned", path)
+			}
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			if f.Uint() == 0 {
+				return status.Errorf(codes.InvalidArgument, "required field path `%s` is not assigned", path)
+			}
+		case reflect.Float32, reflect.Float64:
+			if f.Float() == 0 {
+				return status.Errorf(codes.InvalidArgument, "required field path `%s` is not assigned", path)
+			}
+		case reflect.Struct:
+			if len(fieldNames) > 1 {
+				fieldNames = fieldNames[1:]
+				path = path + "." + fieldNames[0]
+				if err := recurMsgCheck(f.Interface(), fieldNames, path); err != nil {
+					return err
 				}
-			case reflect.Ptr:
-				if f.IsNil() {
-					return status.Errorf(codes.InvalidArgument, "required field `%s` is not provided", fieldName)
-				} else if reflect.Indirect(reflect.ValueOf(f)).Kind() == reflect.Struct {
-					if err := CheckRequiredFieldsCreate(f.Interface(), requiredFields); err != nil {
+			}
+		case reflect.Ptr:
+			if f.IsNil() {
+				return status.Errorf(codes.InvalidArgument, "required field path `%s` is not assigned", path)
+			} else if reflect.Indirect(reflect.ValueOf(f)).Kind() == reflect.Struct {
+				if len(fieldNames) > 1 {
+					fieldNames = fieldNames[1:]
+					path = path + "." + fieldNames[0]
+					if err := recurMsgCheck(f.Interface(), fieldNames, path); err != nil {
 						return err
 					}
 				}
 			}
 		}
+		return nil
 	}
+
+	for _, path := range requiredFields {
+		fieldNames := strings.Split(path, ".")
+		if err := recurMsgCheck(msg, fieldNames, fieldNames[0]); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
 // CheckOutputOnlyFieldsCreate implements follows https://google.aip.dev/203#output-only
-// TODO Limitation: can't handle struct
+// TODO Limitation: can't handle nested struct
 func CheckOutputOnlyFieldsCreate(msg interface{}, outputOnlyFields []string) error {
 	for _, field := range outputOnlyFields {
 		f := reflect.Indirect(reflect.ValueOf(msg)).FieldByName(field)
@@ -66,7 +99,7 @@ func CheckOutputOnlyFieldsCreate(msg interface{}, outputOnlyFields []string) err
 }
 
 // CheckImmutableFieldsUpdate implements follows https://google.aip.dev/203#immutable
-// TODO Limitation: can't handle struct or pointer field
+// TODO Limitation: can't handle nested struct or pointer field
 func CheckImmutableFieldsUpdate(msgReq interface{}, msgUpdate interface{}, immutableFields []string) error {
 	for _, field := range immutableFields {
 		f := reflect.Indirect(reflect.ValueOf(msgReq)).FieldByName(field)
@@ -116,9 +149,7 @@ func CheckOutputOnlyFieldsUpdate(mask *fieldmaskpb.FieldMask, outputOnlyFields [
 	maskUpdated := new(fieldmaskpb.FieldMask)
 
 	for _, path := range mask.GetPaths() {
-		// Get the root of the path
-		root := strings.Split(path, ".")[0]
-		if !contains(outputOnlyFields, strcase.ToCamel(root)) {
+		if !contains(outputOnlyFields, path) {
 			maskUpdated.Paths = append(maskUpdated.Paths, path)
 		}
 	}
