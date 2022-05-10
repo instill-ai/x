@@ -8,7 +8,7 @@ import (
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
-func TestCheckRequiredFields_NoError(t *testing.T) {
+func TestCheckRequiredFieldsCreate_NoError(t *testing.T) {
 	type A struct {
 		Field1 string
 	}
@@ -18,11 +18,11 @@ func TestCheckRequiredFields_NoError(t *testing.T) {
 		Field1: "field1",
 	}
 
-	err := checkfield.CheckRequiredFields(msg, requiredFields)
+	err := checkfield.CheckRequiredFieldsCreate(msg, requiredFields)
 	require.NoError(t, err)
 }
 
-func TestCheckRequiredFields_RequiredString(t *testing.T) {
+func TestCheckRequiredFieldsCreate_RequiredString(t *testing.T) {
 	type A struct {
 		Field1 string
 	}
@@ -30,11 +30,11 @@ func TestCheckRequiredFields_RequiredString(t *testing.T) {
 
 	msg := new(A)
 
-	err := checkfield.CheckRequiredFields(msg, requiredFields)
+	err := checkfield.CheckRequiredFieldsCreate(msg, requiredFields)
 	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = required field `Field1` is not provided")
 }
 
-func TestCheckRequiredFields_RequiredPtr(t *testing.T) {
+func TestCheckRequiredFieldsCreate_RequiredPtr(t *testing.T) {
 	type A struct {
 		Field1 *string
 	}
@@ -42,11 +42,11 @@ func TestCheckRequiredFields_RequiredPtr(t *testing.T) {
 
 	msg := new(A)
 
-	err := checkfield.CheckRequiredFields(msg, requiredFields)
+	err := checkfield.CheckRequiredFieldsCreate(msg, requiredFields)
 	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = required field `Field1` is not provided")
 }
 
-func TestCheckRequiredFields_RequiredStructPtr(t *testing.T) {
+func TestCheckRequiredFieldsCreate_RequiredStructPtr(t *testing.T) {
 	type A struct {
 		Field1 string
 	}
@@ -57,11 +57,11 @@ func TestCheckRequiredFields_RequiredStructPtr(t *testing.T) {
 
 	msg := new(B)
 
-	err := checkfield.CheckRequiredFields(msg, requiredFields)
+	err := checkfield.CheckRequiredFieldsCreate(msg, requiredFields)
 	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = required field `Field2` is not provided")
 }
 
-func TestCheckRequiredFields_RequiredNestedValid(t *testing.T) {
+func TestCheckRequiredFieldsCreate_RequiredNestedValid(t *testing.T) {
 	type A struct {
 		Field1 string
 		Field2 string
@@ -77,11 +77,11 @@ func TestCheckRequiredFields_RequiredNestedValid(t *testing.T) {
 		},
 	}
 
-	err := checkfield.CheckRequiredFields(msg, requiredFields)
+	err := checkfield.CheckRequiredFieldsCreate(msg, requiredFields)
 	require.NoError(t, err)
 }
 
-func TestCheckRequiredFields_RequiredNestedInValid(t *testing.T) {
+func TestCheckRequiredFieldsCreate_RequiredNestedInValid(t *testing.T) {
 	type A struct {
 		Field1 string
 		Field2 string
@@ -97,11 +97,11 @@ func TestCheckRequiredFields_RequiredNestedInValid(t *testing.T) {
 		},
 	}
 
-	err := checkfield.CheckRequiredFields(msg, requiredFields)
+	err := checkfield.CheckRequiredFieldsCreate(msg, requiredFields)
 	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = required field `Field1` is not provided")
 }
 
-func TestOutputOnlyFields_Valid(t *testing.T) {
+func TestCheckOutputOnlyFieldsCreate_Valid(t *testing.T) {
 	type A struct {
 		FieldBool                bool
 		FieldInt                 int
@@ -143,7 +143,7 @@ func TestOutputOnlyFields_Valid(t *testing.T) {
 		FieldStrNotOutputOnly:    "field_str_not_output_only",
 		FieldStrPtrNotOutputOnly: &nonEmptyStr,
 	}
-	err := checkfield.CheckOutputOnlyFields(msg, outputFields)
+	err := checkfield.CheckOutputOnlyFieldsCreate(msg, outputFields)
 	require.NoError(t, err)
 	require.Equal(t, &A{
 		FieldBool:                false,
@@ -166,7 +166,7 @@ func TestOutputOnlyFields_Valid(t *testing.T) {
 	}, msg)
 }
 
-func TestCheckImmutableFields_NoUpdate(t *testing.T) {
+func TestCheckImmutableFieldsUpdate_NoUpdate(t *testing.T) {
 	type A struct {
 		Field1 string
 	}
@@ -179,11 +179,11 @@ func TestCheckImmutableFields_NoUpdate(t *testing.T) {
 		Field1: "msgUpdate",
 	}
 
-	err := checkfield.CheckImmutableFields(msgReq, msgUpdate, immutableFields)
+	err := checkfield.CheckImmutableFieldsUpdate(msgReq, msgUpdate, immutableFields)
 	require.NoError(t, err)
 }
 
-func TestCheckImmutableFields_UpdateImmutableBool(t *testing.T) {
+func TestCheckImmutableFieldsUpdate_UpdateImmutableBool(t *testing.T) {
 	type A struct {
 		Field1 bool
 	}
@@ -196,11 +196,11 @@ func TestCheckImmutableFields_UpdateImmutableBool(t *testing.T) {
 		Field1: false,
 	}
 
-	err := checkfield.CheckImmutableFields(msgReq, msgUpdate, immutableFields)
+	err := checkfield.CheckImmutableFieldsUpdate(msgReq, msgUpdate, immutableFields)
 	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = field `Field1` is immutable")
 }
 
-func TestCheckImmutableFields_UpdateImmutableStr(t *testing.T) {
+func TestCheckImmutableFieldsUpdate_UpdateImmutableStr(t *testing.T) {
 	type A struct {
 		Field1 string
 	}
@@ -213,11 +213,11 @@ func TestCheckImmutableFields_UpdateImmutableStr(t *testing.T) {
 		Field1: "msgUpdate",
 	}
 
-	err := checkfield.CheckImmutableFields(msgReq, msgUpdate, immutableFields)
+	err := checkfield.CheckImmutableFieldsUpdate(msgReq, msgUpdate, immutableFields)
 	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = field `Field1` is immutable")
 }
 
-func TestCheckImmutableFields_UpdateImmutableInt(t *testing.T) {
+func TestCheckImmutableFieldsUpdate_UpdateImmutableInt(t *testing.T) {
 	type A struct {
 		Field1 int
 	}
@@ -230,11 +230,11 @@ func TestCheckImmutableFields_UpdateImmutableInt(t *testing.T) {
 		Field1: 20,
 	}
 
-	err := checkfield.CheckImmutableFields(msgReq, msgUpdate, immutableFields)
+	err := checkfield.CheckImmutableFieldsUpdate(msgReq, msgUpdate, immutableFields)
 	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = field `Field1` is immutable")
 }
 
-func TestCheckImmutableFields_UpdateImmutableFloat(t *testing.T) {
+func TestCheckImmutableFieldsUpdate_UpdateImmutableFloat(t *testing.T) {
 	type A struct {
 		Field1 float32
 	}
@@ -247,7 +247,7 @@ func TestCheckImmutableFields_UpdateImmutableFloat(t *testing.T) {
 		Field1: 20,
 	}
 
-	err := checkfield.CheckImmutableFields(msgReq, msgUpdate, immutableFields)
+	err := checkfield.CheckImmutableFieldsUpdate(msgReq, msgUpdate, immutableFields)
 	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = field `Field1` is immutable")
 }
 

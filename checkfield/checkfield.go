@@ -11,9 +11,9 @@ import (
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
-// CheckRequiredFields implements follows https://google.aip.dev/203#required
+// CheckRequiredFieldsCreate implements follows https://google.aip.dev/203#required
 // TODO limitation: can't handle number and struct field
-func CheckRequiredFields(msg interface{}, requiredFields []string) error {
+func CheckRequiredFieldsCreate(msg interface{}, requiredFields []string) error {
 	for i := 0; i < reflect.Indirect(reflect.ValueOf(msg)).NumField(); i++ {
 		fieldName := reflect.Indirect(reflect.ValueOf(msg)).Type().Field(i).Name
 		if contains(requiredFields, fieldName) {
@@ -29,7 +29,7 @@ func CheckRequiredFields(msg interface{}, requiredFields []string) error {
 				if f.IsNil() {
 					return status.Errorf(codes.InvalidArgument, "required field `%s` is not provided", fieldName)
 				} else if reflect.Indirect(reflect.ValueOf(f)).Kind() == reflect.Struct {
-					if err := CheckRequiredFields(f.Interface(), requiredFields); err != nil {
+					if err := CheckRequiredFieldsCreate(f.Interface(), requiredFields); err != nil {
 						return err
 					}
 				}
@@ -39,9 +39,9 @@ func CheckRequiredFields(msg interface{}, requiredFields []string) error {
 	return nil
 }
 
-// CheckOutputOnlyFields implements follows https://google.aip.dev/203#output-only
+// CheckOutputOnlyFieldsCreate implements follows https://google.aip.dev/203#output-only
 // TODO Limitation: can't handle struct
-func CheckOutputOnlyFields(msg interface{}, outputOnlyFields []string) error {
+func CheckOutputOnlyFieldsCreate(msg interface{}, outputOnlyFields []string) error {
 	for _, field := range outputOnlyFields {
 		f := reflect.Indirect(reflect.ValueOf(msg)).FieldByName(field)
 		switch f.Kind() {
@@ -58,7 +58,7 @@ func CheckOutputOnlyFields(msg interface{}, outputOnlyFields []string) error {
 		case reflect.Ptr:
 			reflect.ValueOf(msg).Elem().FieldByName(field).Set(reflect.Zero(f.Type()))
 		case reflect.Struct:
-			if err := CheckOutputOnlyFields(f, outputOnlyFields); err != nil {
+			if err := CheckOutputOnlyFieldsCreate(f, outputOnlyFields); err != nil {
 				return err
 			}
 		}
@@ -66,9 +66,9 @@ func CheckOutputOnlyFields(msg interface{}, outputOnlyFields []string) error {
 	return nil
 }
 
-// CheckImmutableFields implements follows https://google.aip.dev/203#immutable
+// CheckImmutableFieldsUpdate implements follows https://google.aip.dev/203#immutable
 // TODO Limitation: can't handle struct or pointer field
-func CheckImmutableFields(msgReq interface{}, msgUpdate interface{}, immutableFields []string) error {
+func CheckImmutableFieldsUpdate(msgReq interface{}, msgUpdate interface{}, immutableFields []string) error {
 	for _, field := range immutableFields {
 		f := reflect.Indirect(reflect.ValueOf(msgReq)).FieldByName(field)
 		switch f.Kind() {
