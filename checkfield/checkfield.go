@@ -41,8 +41,7 @@ func CheckRequiredFieldsCreate(msg interface{}, requiredFields []string) error {
 			}
 		case reflect.Struct:
 			if len(fieldNames) > 1 {
-				fieldNames = fieldNames[1:]
-				path = path + "." + fieldNames[0]
+				path, fieldNames = path+"."+fieldNames[0], fieldNames[1:]
 				if err := recurMsgCheck(f.Interface(), fieldNames, path); err != nil {
 					return err
 				}
@@ -52,8 +51,7 @@ func CheckRequiredFieldsCreate(msg interface{}, requiredFields []string) error {
 				return status.Errorf(codes.InvalidArgument, "required field path `%s` is not assigned", path)
 			} else if reflect.ValueOf(f).Kind() == reflect.Struct {
 				if len(fieldNames) > 1 {
-					fieldNames = fieldNames[1:]
-					path = path + "." + fieldNames[0]
+					path, fieldNames = path+"."+fieldNames[0], fieldNames[1:]
 					if err := recurMsgCheck(f.Interface(), fieldNames, path); err != nil {
 						return err
 					}
@@ -75,14 +73,12 @@ func CheckRequiredFieldsCreate(msg interface{}, requiredFields []string) error {
 
 // CheckOutputOnlyFieldsCreate implements follows https://google.aip.dev/203#output-only
 // The msg parameter is a Protobuf message instance
-// The requiredFields is a slice of field path with snake_case name
+// The outputOnlyFields is a slice of field path with snake_case name
 func CheckOutputOnlyFieldsCreate(msg interface{}, outputOnlyFields []string) error {
 
 	var recurMsgCheck func(interface{}, []string, string) error
-
 	recurMsgCheck = func(m interface{}, fieldNames []string, path string) error {
 		fieldName := strcase.ToCamel(fieldNames[0])
-
 		f := reflect.ValueOf(m).Elem().FieldByName(fieldName)
 		switch f.Kind() {
 		case reflect.Invalid:
@@ -99,8 +95,7 @@ func CheckOutputOnlyFieldsCreate(msg interface{}, outputOnlyFields []string) err
 			f.SetString("")
 		case reflect.Ptr:
 			if len(fieldNames) > 1 && reflect.ValueOf(f).Kind() == reflect.Struct {
-				fieldNames = fieldNames[1:]
-				path = path + "." + fieldNames[0]
+				path, fieldNames = path+"."+fieldNames[0], fieldNames[1:]
 				if err := recurMsgCheck(f.Interface(), fieldNames, path); err != nil {
 					return err
 				}
@@ -122,43 +117,67 @@ func CheckOutputOnlyFieldsCreate(msg interface{}, outputOnlyFields []string) err
 }
 
 // CheckImmutableFieldsUpdate implements follows https://google.aip.dev/203#immutable
-// TODO Limitation: can't handle nested struct or pointer field
+// The msgReq parameter is a Protobuf message instance requested to update msgUpdate
+// The outputOnlyFields is a slice of field path with snake_case name
 func CheckImmutableFieldsUpdate(msgReq interface{}, msgUpdate interface{}, immutableFields []string) error {
-	for _, field := range immutableFields {
-		f := reflect.Indirect(reflect.ValueOf(msgReq)).FieldByName(field)
+
+	var recurMsgCheck func(interface{}, interface{}, []string, string) error
+	recurMsgCheck = func(mr interface{}, mu interface{}, fieldNames []string, path string) error {
+		fieldName := strcase.ToCamel(fieldNames[0])
+		f := reflect.Indirect(reflect.ValueOf(mr)).FieldByName(fieldName)
 		switch f.Kind() {
+		case reflect.Invalid:
+			return status.Errorf(codes.InvalidArgument, "immutable field path `%s` is not found in the Protobuf message", path)
 		case reflect.Bool:
 			if f.Bool() {
-				if f.Bool() != reflect.Indirect(reflect.ValueOf(msgUpdate)).FieldByName(field).Bool() {
-					return status.Errorf(codes.InvalidArgument, "field `%s` is immutable", field)
+				if f.Bool() != reflect.Indirect(reflect.ValueOf(mu)).FieldByName(fieldName).Bool() {
+					return status.Errorf(codes.InvalidArgument, "field path `%s` is immutable", path)
 				}
 			}
 		case reflect.String:
 			if f.String() != "" {
-				if f.String() != reflect.Indirect(reflect.ValueOf(msgUpdate)).FieldByName(field).String() {
-					return status.Errorf(codes.InvalidArgument, "field `%s` is immutable", field)
+				if f.String() != reflect.Indirect(reflect.ValueOf(mu)).FieldByName(fieldName).String() {
+					return status.Errorf(codes.InvalidArgument, "field path `%s` is immutable", path)
 				}
 			}
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 			if f.Int() != 0 {
-				if f.Int() != reflect.Indirect(reflect.ValueOf(msgUpdate)).FieldByName(field).Int() {
-					return status.Errorf(codes.InvalidArgument, "field `%v` is immutable", field)
+				if f.Int() != reflect.Indirect(reflect.ValueOf(mu)).FieldByName(fieldName).Int() {
+					return status.Errorf(codes.InvalidArgument, "field path `%v` is immutable", path)
 				}
 			}
 		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 			if f.Uint() != 0 {
-				if f.Uint() != reflect.Indirect(reflect.ValueOf(msgUpdate)).FieldByName(field).Uint() {
-					return status.Errorf(codes.InvalidArgument, "field `%v` is immutable", field)
+				if f.Uint() != reflect.Indirect(reflect.ValueOf(mu)).FieldByName(fieldName).Uint() {
+					return status.Errorf(codes.InvalidArgument, "field path `%v` is immutable", path)
 				}
 			}
 		case reflect.Float32, reflect.Float64:
 			if f.Float() != 0 {
-				if f.Float() != reflect.Indirect(reflect.ValueOf(msgUpdate)).FieldByName(field).Float() {
-					return status.Errorf(codes.InvalidArgument, "field `%v` is immutable", field)
+				if f.Float() != reflect.Indirect(reflect.ValueOf(mu)).FieldByName(fieldName).Float() {
+					return status.Errorf(codes.InvalidArgument, "field path `%v` is immutable", path)
 				}
 			}
+		case reflect.Ptr:
+			if len(fieldNames) > 1 && reflect.ValueOf(f).Kind() == reflect.Struct {
+				path, fieldNames = path+"."+fieldNames[0], fieldNames[1:]
+				if err := recurMsgCheck(f.Interface(), reflect.Indirect(reflect.ValueOf(mu)).FieldByName(fieldName).Interface(), fieldNames, path); err != nil {
+					return err
+				}
+			} else {
+				f.Set(reflect.Zero(f.Type()))
+			}
+		}
+		return nil
+	}
+
+	for _, path := range immutableFields {
+		fieldNames := strings.Split(path, ".")
+		if err := recurMsgCheck(msgReq, msgUpdate, fieldNames, fieldNames[0]); err != nil {
+			return err
 		}
 	}
+
 	return nil
 }
 
