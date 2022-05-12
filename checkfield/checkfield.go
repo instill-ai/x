@@ -12,10 +12,10 @@ import (
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
-// CheckRequiredFieldsCreate implements follows https://google.aip.dev/203#required
+// CheckRequiredFields implements follows https://google.aip.dev/203#required
 // The msg parameter is a Protobuf message instance
 // The requiredFields is a slice of field path with snake_case name
-func CheckRequiredFieldsCreate(msg interface{}, requiredFields []string) error {
+func CheckRequiredFields(msg interface{}, requiredFields []string) error {
 
 	var recurMsgCheck func(interface{}, []string, string) error
 	recurMsgCheck = func(m interface{}, fieldNames []string, path string) error {
@@ -71,10 +71,10 @@ func CheckRequiredFieldsCreate(msg interface{}, requiredFields []string) error {
 	return nil
 }
 
-// CheckOutputOnlyFieldsCreate implements follows https://google.aip.dev/203#output-only
+// CheckCreateOutputOnlyFields implements follows https://google.aip.dev/203#output-only
 // The msg parameter is a Protobuf message instance
 // The outputOnlyFields is a slice of field path with snake_case name
-func CheckOutputOnlyFieldsCreate(msg interface{}, outputOnlyFields []string) error {
+func CheckCreateOutputOnlyFields(msg interface{}, outputOnlyFields []string) error {
 
 	var recurMsgCheck func(interface{}, []string, string) error
 	recurMsgCheck = func(m interface{}, fieldNames []string, path string) error {
@@ -116,10 +116,10 @@ func CheckOutputOnlyFieldsCreate(msg interface{}, outputOnlyFields []string) err
 	return nil
 }
 
-// CheckImmutableFieldsUpdate implements follows https://google.aip.dev/203#immutable
+// CheckUpdateImmutableFields implements follows https://google.aip.dev/203#immutable
 // The msgReq parameter is a Protobuf message instance requested to update msgUpdate
 // The outputOnlyFields is a slice of field path with snake_case name
-func CheckImmutableFieldsUpdate(msgReq interface{}, msgUpdate interface{}, immutableFields []string) error {
+func CheckUpdateImmutableFields(msgReq interface{}, msgUpdate interface{}, immutableFields []string) error {
 
 	var recurMsgCheck func(interface{}, interface{}, []string, string) error
 	recurMsgCheck = func(mr interface{}, mu interface{}, fieldNames []string, path string) error {
@@ -181,13 +181,9 @@ func CheckImmutableFieldsUpdate(msgReq interface{}, msgUpdate interface{}, immut
 	return nil
 }
 
-// CheckOutputOnlyFieldsUpdate removes output only fields from the input field mask
-//
-// output only fields are in `CamelCase` format and fields in the field mask are in `snake_case` format.
-// if a path in the input field mask is nested, such as `a.b`, and the output only fields includes `A`,
-// the path will be removed. The unfiltered paths will be stored in the the output field mask
-// in the original format.
-func CheckOutputOnlyFieldsUpdate(mask *fieldmaskpb.FieldMask, outputOnlyFields []string) (*fieldmaskpb.FieldMask, error) {
+// CheckUpdateOutputOnlyFields removes outputOnlyFields from the input field mask
+// outputOnlyFields are field paths in `snake_case` like paths in the input field mask.
+func CheckUpdateOutputOnlyFields(mask *fieldmaskpb.FieldMask, outputOnlyFields []string) (*fieldmaskpb.FieldMask, error) {
 	maskUpdated := new(fieldmaskpb.FieldMask)
 
 	for _, path := range mask.GetPaths() {
