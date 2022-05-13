@@ -165,7 +165,7 @@ func CheckUpdateImmutableFields(msgReq interface{}, msgUpdate interface{}, immut
 					return err
 				}
 			} else {
-				f.Set(reflect.Zero(f.Type()))
+				return status.Errorf(codes.InvalidArgument, "field path `%v` is immutable", path)
 			}
 		}
 		return nil

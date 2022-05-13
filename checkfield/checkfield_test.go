@@ -298,6 +298,31 @@ func TestCheckUpdateImmutableFields_UpdateImmutableFloat(t *testing.T) {
 	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = field path `field1` is immutable")
 }
 
+func TestCheckUpdateImmutableFields_UpdateImmutableStruct(t *testing.T) {
+	type A struct {
+		Field1 float32
+	}
+	type B struct {
+		Field1 *A
+	}
+
+	immutableFields := []string{"field1"}
+
+	msgReq := &B{
+		Field1: &A{
+			Field1: 10,
+		},
+	}
+	msgUpdate := &B{
+		Field1: &A{
+			Field1: 20,
+		},
+	}
+
+	err := checkfield.CheckUpdateImmutableFields(msgReq, msgUpdate, immutableFields)
+	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = field path `field1` is immutable")
+}
+
 func TestCheckUpdateImmutableFields_UpdateImmutableNestedStruct(t *testing.T) {
 	type A struct {
 		Field1 float32
