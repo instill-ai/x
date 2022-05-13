@@ -129,43 +129,45 @@ func CheckUpdateImmutableFields(msgReq interface{}, msgUpdate interface{}, immut
 		case reflect.Invalid:
 			return status.Errorf(codes.InvalidArgument, "immutable field path `%s` is not found in the Protobuf message", path)
 		case reflect.Bool:
-			if f.Bool() {
+			if !f.IsZero() {
 				if f.Bool() != reflect.Indirect(reflect.ValueOf(mu)).FieldByName(fieldName).Bool() {
 					return status.Errorf(codes.InvalidArgument, "field path `%s` is immutable", path)
 				}
 			}
 		case reflect.String:
-			if f.String() != "" {
+			if !f.IsZero() {
 				if f.String() != reflect.Indirect(reflect.ValueOf(mu)).FieldByName(fieldName).String() {
 					return status.Errorf(codes.InvalidArgument, "field path `%s` is immutable", path)
 				}
 			}
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			if f.Int() != 0 {
+			if !f.IsZero() {
 				if f.Int() != reflect.Indirect(reflect.ValueOf(mu)).FieldByName(fieldName).Int() {
 					return status.Errorf(codes.InvalidArgument, "field path `%v` is immutable", path)
 				}
 			}
 		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			if f.Uint() != 0 {
+			if !f.IsZero() {
 				if f.Uint() != reflect.Indirect(reflect.ValueOf(mu)).FieldByName(fieldName).Uint() {
 					return status.Errorf(codes.InvalidArgument, "field path `%v` is immutable", path)
 				}
 			}
 		case reflect.Float32, reflect.Float64:
-			if f.Float() != 0 {
+			if !f.IsZero() {
 				if f.Float() != reflect.Indirect(reflect.ValueOf(mu)).FieldByName(fieldName).Float() {
 					return status.Errorf(codes.InvalidArgument, "field path `%v` is immutable", path)
 				}
 			}
 		case reflect.Ptr:
-			if len(fieldNames) > 1 && reflect.ValueOf(f).Kind() == reflect.Struct {
-				path, fieldNames = path+"."+fieldNames[0], fieldNames[1:]
-				if err := recurMsgCheck(f.Interface(), reflect.Indirect(reflect.ValueOf(mu)).FieldByName(fieldName).Interface(), fieldNames, path); err != nil {
-					return err
+			if !f.IsZero() {
+				if len(fieldNames) > 1 && reflect.ValueOf(f).Kind() == reflect.Struct {
+					path, fieldNames = path+"."+fieldNames[0], fieldNames[1:]
+					if err := recurMsgCheck(f.Interface(), reflect.Indirect(reflect.ValueOf(mu)).FieldByName(fieldName).Interface(), fieldNames, path); err != nil {
+						return err
+					}
+				} else {
+					return status.Errorf(codes.InvalidArgument, "field path `%v` is immutable", path)
 				}
-			} else {
-				return status.Errorf(codes.InvalidArgument, "field path `%v` is immutable", path)
 			}
 		}
 		return nil
