@@ -19,6 +19,11 @@ func CheckRequiredFields(msg interface{}, requiredFields []string) error {
 
 	var recurMsgCheck func(interface{}, []string, string) error
 	recurMsgCheck = func(m interface{}, fieldNames []string, path string) error {
+
+		if reflect.ValueOf(m).IsZero() {
+			return status.Errorf(codes.InvalidArgument, "required field path `%s` is empty", path)
+		}
+
 		f := reflect.Indirect(reflect.ValueOf(m)).FieldByName(strcase.ToCamel(fieldNames[0]))
 		switch f.Kind() {
 		case reflect.Invalid:
@@ -49,12 +54,10 @@ func CheckRequiredFields(msg interface{}, requiredFields []string) error {
 		case reflect.Ptr:
 			if f.IsNil() {
 				return status.Errorf(codes.InvalidArgument, "required field path `%s` is not assigned", path)
-			} else if reflect.ValueOf(f).Kind() == reflect.Struct {
-				if len(fieldNames) > 1 {
-					path, fieldNames = path+"."+fieldNames[1], fieldNames[1:]
-					if err := recurMsgCheck(f.Interface(), fieldNames, path); err != nil {
-						return err
-					}
+			} else if len(fieldNames) > 1 && reflect.ValueOf(f).Kind() == reflect.Struct {
+				path, fieldNames = path+"."+fieldNames[1], fieldNames[1:]
+				if err := recurMsgCheck(f.Interface(), fieldNames, path); err != nil {
+					return err
 				}
 			}
 		}
@@ -78,6 +81,11 @@ func CheckCreateOutputOnlyFields(msg interface{}, outputOnlyFields []string) err
 
 	var recurMsgCheck func(interface{}, []string, string) error
 	recurMsgCheck = func(m interface{}, fieldNames []string, path string) error {
+
+		if reflect.ValueOf(m).IsZero() {
+			return status.Errorf(codes.InvalidArgument, "output-only field path `%s` is empty", path)
+		}
+
 		fieldName := strcase.ToCamel(fieldNames[0])
 		f := reflect.ValueOf(m).Elem().FieldByName(fieldName)
 		switch f.Kind() {
@@ -94,7 +102,7 @@ func CheckCreateOutputOnlyFields(msg interface{}, outputOnlyFields []string) err
 		case reflect.String:
 			f.SetString("")
 		case reflect.Ptr:
-			if len(fieldNames) > 1 && reflect.ValueOf(f).Kind() == reflect.Struct {
+			if !f.IsNil() && len(fieldNames) > 1 && reflect.ValueOf(f).Kind() == reflect.Struct {
 				path, fieldNames = path+"."+fieldNames[1], fieldNames[1:]
 				if err := recurMsgCheck(f.Interface(), fieldNames, path); err != nil {
 					return err
@@ -123,6 +131,13 @@ func CheckUpdateImmutableFields(msgReq interface{}, msgUpdate interface{}, immut
 
 	var recurMsgCheck func(interface{}, interface{}, []string, string) error
 	recurMsgCheck = func(mr interface{}, mu interface{}, fieldNames []string, path string) error {
+
+		if reflect.ValueOf(mr).IsZero() {
+			return status.Errorf(codes.InvalidArgument, "immutable field path `%s` in request message is empty", path)
+		} else if reflect.ValueOf(mu).IsZero() {
+			return status.Errorf(codes.InvalidArgument, "immutable field path `%s` in update message is empty", path)
+		}
+
 		fieldName := strcase.ToCamel(fieldNames[0])
 		f := reflect.Indirect(reflect.ValueOf(mr)).FieldByName(fieldName)
 		switch f.Kind() {
