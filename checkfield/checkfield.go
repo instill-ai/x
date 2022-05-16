@@ -1,14 +1,13 @@
 package checkfield
 
 import (
+	"fmt"
 	"reflect"
 	"regexp"
 	"strings"
 
-	"github.com/gogo/status"
 	"github.com/google/uuid"
 	"github.com/iancoleman/strcase"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 )
 
@@ -21,28 +20,28 @@ func CheckRequiredFields(msg interface{}, requiredFields []string) error {
 	recurMsgCheck = func(m interface{}, fieldNames []string, path string) error {
 
 		if reflect.ValueOf(m).IsZero() {
-			return status.Errorf(codes.InvalidArgument, "required field path `%s` is empty", path)
+			return fmt.Errorf("required field path `%s` is empty", path)
 		}
 
 		f := reflect.Indirect(reflect.ValueOf(m)).FieldByName(strcase.ToCamel(fieldNames[0]))
 		switch f.Kind() {
 		case reflect.Invalid:
-			return status.Errorf(codes.InvalidArgument, "required field path `%s` is not found in the Protobuf message", path)
+			return fmt.Errorf("required field path `%s` is not found in the Protobuf message", path)
 		case reflect.String:
 			if f.String() == "" {
-				return status.Errorf(codes.InvalidArgument, "required field path `%s` is not assigned", path)
+				return fmt.Errorf("required field path `%s` is not assigned", path)
 			}
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 			if f.Int() == 0 {
-				return status.Errorf(codes.InvalidArgument, "required field path `%s` is not assigned", path)
+				return fmt.Errorf("required field path `%s` is not assigned", path)
 			}
 		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 			if f.Uint() == 0 {
-				return status.Errorf(codes.InvalidArgument, "required field path `%s` is not assigned", path)
+				return fmt.Errorf("required field path `%s` is not assigned", path)
 			}
 		case reflect.Float32, reflect.Float64:
 			if f.Float() == 0 {
-				return status.Errorf(codes.InvalidArgument, "required field path `%s` is not assigned", path)
+				return fmt.Errorf("required field path `%s` is not assigned", path)
 			}
 		case reflect.Struct:
 			if len(fieldNames) > 1 {
@@ -53,7 +52,7 @@ func CheckRequiredFields(msg interface{}, requiredFields []string) error {
 			}
 		case reflect.Ptr:
 			if f.IsNil() {
-				return status.Errorf(codes.InvalidArgument, "required field path `%s` is not assigned", path)
+				return fmt.Errorf("required field path `%s` is not assigned", path)
 			} else if len(fieldNames) > 1 && reflect.ValueOf(f).Kind() == reflect.Struct {
 				path, fieldNames = path+"."+fieldNames[1], fieldNames[1:]
 				if err := recurMsgCheck(f.Interface(), fieldNames, path); err != nil {
@@ -83,14 +82,14 @@ func CheckCreateOutputOnlyFields(msg interface{}, outputOnlyFields []string) err
 	recurMsgCheck = func(m interface{}, fieldNames []string, path string) error {
 
 		if reflect.ValueOf(m).IsZero() {
-			return status.Errorf(codes.InvalidArgument, "output-only field path `%s` is empty", path)
+			return fmt.Errorf("output-only field path `%s` is empty", path)
 		}
 
 		fieldName := strcase.ToCamel(fieldNames[0])
 		f := reflect.ValueOf(m).Elem().FieldByName(fieldName)
 		switch f.Kind() {
 		case reflect.Invalid:
-			return status.Errorf(codes.InvalidArgument, "output-only field path `%s` is not found in the Protobuf message", path)
+			return fmt.Errorf("output-only field path `%s` is not found in the Protobuf message", path)
 		case reflect.Bool:
 			f.SetBool(false)
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
@@ -133,44 +132,44 @@ func CheckUpdateImmutableFields(msgReq interface{}, msgUpdate interface{}, immut
 	recurMsgCheck = func(mr interface{}, mu interface{}, fieldNames []string, path string) error {
 
 		if reflect.ValueOf(mr).IsZero() {
-			return status.Errorf(codes.InvalidArgument, "immutable field path `%s` in request message is empty", path)
+			return fmt.Errorf("immutable field path `%s` in request message is empty", path)
 		} else if reflect.ValueOf(mu).IsZero() {
-			return status.Errorf(codes.InvalidArgument, "immutable field path `%s` in update message is empty", path)
+			return fmt.Errorf("immutable field path `%s` in update message is empty", path)
 		}
 
 		fieldName := strcase.ToCamel(fieldNames[0])
 		f := reflect.Indirect(reflect.ValueOf(mr)).FieldByName(fieldName)
 		switch f.Kind() {
 		case reflect.Invalid:
-			return status.Errorf(codes.InvalidArgument, "immutable field path `%s` is not found in the Protobuf message", path)
+			return fmt.Errorf("immutable field path `%s` is not found in the Protobuf message", path)
 		case reflect.Bool:
 			if !f.IsZero() {
 				if f.Bool() != reflect.Indirect(reflect.ValueOf(mu)).FieldByName(fieldName).Bool() {
-					return status.Errorf(codes.InvalidArgument, "field path `%s` is immutable", path)
+					return fmt.Errorf("field path `%s` is immutable", path)
 				}
 			}
 		case reflect.String:
 			if !f.IsZero() {
 				if f.String() != reflect.Indirect(reflect.ValueOf(mu)).FieldByName(fieldName).String() {
-					return status.Errorf(codes.InvalidArgument, "field path `%s` is immutable", path)
+					return fmt.Errorf("field path `%s` is immutable", path)
 				}
 			}
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 			if !f.IsZero() {
 				if f.Int() != reflect.Indirect(reflect.ValueOf(mu)).FieldByName(fieldName).Int() {
-					return status.Errorf(codes.InvalidArgument, "field path `%v` is immutable", path)
+					return fmt.Errorf("field path `%v` is immutable", path)
 				}
 			}
 		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 			if !f.IsZero() {
 				if f.Uint() != reflect.Indirect(reflect.ValueOf(mu)).FieldByName(fieldName).Uint() {
-					return status.Errorf(codes.InvalidArgument, "field path `%v` is immutable", path)
+					return fmt.Errorf("field path `%v` is immutable", path)
 				}
 			}
 		case reflect.Float32, reflect.Float64:
 			if !f.IsZero() {
 				if f.Float() != reflect.Indirect(reflect.ValueOf(mu)).FieldByName(fieldName).Float() {
-					return status.Errorf(codes.InvalidArgument, "field path `%v` is immutable", path)
+					return fmt.Errorf("field path `%v` is immutable", path)
 				}
 			}
 		case reflect.Ptr:
@@ -181,7 +180,7 @@ func CheckUpdateImmutableFields(msgReq interface{}, msgUpdate interface{}, immut
 						return err
 					}
 				} else {
-					return status.Errorf(codes.InvalidArgument, "field path `%v` is immutable", path)
+					return fmt.Errorf("field path `%v` is immutable", path)
 				}
 			}
 		}
@@ -214,11 +213,11 @@ func CheckUpdateOutputOnlyFields(mask *fieldmaskpb.FieldMask, outputOnlyFields [
 // CheckResourceID implements follows https://google.aip.dev/122#resource-id-segments
 func CheckResourceID(id string) error {
 	if _, err := uuid.Parse(id); err == nil {
-		return status.Error(codes.InvalidArgument, "`id` is not allowed to be a UUID")
+		return fmt.Errorf("`id` is not allowed to be a UUID")
 	}
 
 	if match, _ := regexp.MatchString("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", id); !match {
-		return status.Error(codes.InvalidArgument, "`id` needs to be within ASCII-only 63 characters following RFC-1034 with a regexp (^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$)")
+		return fmt.Errorf("`id` needs to be within ASCII-only 63 characters following RFC-1034 with a regexp (^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$)")
 	}
 	return nil
 }

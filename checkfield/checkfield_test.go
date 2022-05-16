@@ -58,7 +58,7 @@ func TestCheckRequiredFields_RequiredString(t *testing.T) {
 	msg := new(A)
 
 	err := checkfield.CheckRequiredFields(msg, requiredFields)
-	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = required field path `field1` is not assigned")
+	require.EqualError(t, err, "required field path `field1` is not assigned")
 }
 
 func TestCheckRequiredFields_RequiredPtr(t *testing.T) {
@@ -70,7 +70,7 @@ func TestCheckRequiredFields_RequiredPtr(t *testing.T) {
 	msg := new(A)
 
 	err := checkfield.CheckRequiredFields(msg, requiredFields)
-	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = required field path `field1` is not assigned")
+	require.EqualError(t, err, "required field path `field1` is not assigned")
 }
 
 func TestCheckRequiredFields_RequiredStructPtr(t *testing.T) {
@@ -85,7 +85,7 @@ func TestCheckRequiredFields_RequiredStructPtr(t *testing.T) {
 	msg := new(B)
 
 	err := checkfield.CheckRequiredFields(msg, requiredFields)
-	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = required field path `field2` is not assigned")
+	require.EqualError(t, err, "required field path `field2` is not assigned")
 }
 
 func TestCheckRequiredFields_RequiredNestedValid(t *testing.T) {
@@ -125,7 +125,7 @@ func TestCheckRequiredFields_RequiredNestedInValid(t *testing.T) {
 	}
 
 	err := checkfield.CheckRequiredFields(msg, requiredFields)
-	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = required field path `field1.field1` is not assigned")
+	require.EqualError(t, err, "required field path `field1.field1` is not assigned")
 }
 
 func TestCheckCreateOutputOnlyFields_Valid(t *testing.T) {
@@ -244,7 +244,7 @@ func TestCheckUpdateImmutableFields_UpdateImmutableBool(t *testing.T) {
 	}
 
 	err := checkfield.CheckUpdateImmutableFields(msgReq, msgUpdate, immutableFields)
-	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = field path `field1` is immutable")
+	require.EqualError(t, err, "field path `field1` is immutable")
 }
 
 func TestCheckUpdateImmutableFields_UpdateImmutableStr(t *testing.T) {
@@ -261,7 +261,7 @@ func TestCheckUpdateImmutableFields_UpdateImmutableStr(t *testing.T) {
 	}
 
 	err := checkfield.CheckUpdateImmutableFields(msgReq, msgUpdate, immutableFields)
-	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = field path `field1` is immutable")
+	require.EqualError(t, err, "field path `field1` is immutable")
 }
 
 func TestCheckUpdateImmutableFields_UpdateImmutableInt(t *testing.T) {
@@ -278,7 +278,7 @@ func TestCheckUpdateImmutableFields_UpdateImmutableInt(t *testing.T) {
 	}
 
 	err := checkfield.CheckUpdateImmutableFields(msgReq, msgUpdate, immutableFields)
-	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = field path `field1` is immutable")
+	require.EqualError(t, err, "field path `field1` is immutable")
 }
 
 func TestCheckUpdateImmutableFields_UpdateImmutableFloat(t *testing.T) {
@@ -295,7 +295,7 @@ func TestCheckUpdateImmutableFields_UpdateImmutableFloat(t *testing.T) {
 	}
 
 	err := checkfield.CheckUpdateImmutableFields(msgReq, msgUpdate, immutableFields)
-	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = field path `field1` is immutable")
+	require.EqualError(t, err, "field path `field1` is immutable")
 }
 
 func TestCheckUpdateImmutableFields_UpdateImmutableStruct(t *testing.T) {
@@ -320,7 +320,7 @@ func TestCheckUpdateImmutableFields_UpdateImmutableStruct(t *testing.T) {
 	}
 
 	err := checkfield.CheckUpdateImmutableFields(msgReq, msgUpdate, immutableFields)
-	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = field path `field1` is immutable")
+	require.EqualError(t, err, "field path `field1` is immutable")
 }
 
 func TestCheckUpdateImmutableFields_UpdateImmutableNestedStruct(t *testing.T) {
@@ -345,7 +345,7 @@ func TestCheckUpdateImmutableFields_UpdateImmutableNestedStruct(t *testing.T) {
 	}
 
 	err := checkfield.CheckUpdateImmutableFields(msgReq, msgUpdate, immutableFields)
-	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = field path `field1.field1` is immutable")
+	require.EqualError(t, err, "field path `field1.field1` is immutable")
 }
 
 func TestCheckResourceID_Valid(t *testing.T) {
@@ -357,7 +357,7 @@ func TestCheckResourceID_InvalidShort(t *testing.T) {
 	// 0-charactor string
 	tooShort := ""
 	err := checkfield.CheckResourceID(tooShort)
-	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = `id` needs to be within ASCII-only 63 characters following RFC-1034 with a regexp (^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$)")
+	require.EqualError(t, err, "`id` needs to be within ASCII-only 63 characters following RFC-1034 with a regexp (^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$)")
 }
 
 func TestCheckResourceID_InvalidLong(t *testing.T) {
@@ -365,17 +365,17 @@ func TestCheckResourceID_InvalidLong(t *testing.T) {
 	// 64-charactor string
 	tooLong := "abcdefghijklmnopqrstuvwxyz-ABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789"
 	err := checkfield.CheckResourceID(tooLong)
-	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = `id` needs to be within ASCII-only 63 characters following RFC-1034 with a regexp (^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$)")
+	require.EqualError(t, err, "`id` needs to be within ASCII-only 63 characters following RFC-1034 with a regexp (^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$)")
 }
 
 func TestCheckResourceID_InvalidUUID(t *testing.T) {
 	a := "91be8b99-cd60-4081-9187-9796d01fd50b"
 	err := checkfield.CheckResourceID(a)
-	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = `id` is not allowed to be a UUID")
+	require.EqualError(t, err, "`id` is not allowed to be a UUID")
 }
 
 func TestCheckResourceID_Invalid(t *testing.T) {
 	a := "local_user"
 	err := checkfield.CheckResourceID(a)
-	require.EqualError(t, err, "rpc error: code = InvalidArgument desc = `id` needs to be within ASCII-only 63 characters following RFC-1034 with a regexp (^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$)")
+	require.EqualError(t, err, "`id` needs to be within ASCII-only 63 characters following RFC-1034 with a regexp (^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$)")
 }
