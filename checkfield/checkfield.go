@@ -41,7 +41,7 @@ func CheckRequiredFields(msg interface{}, requiredFields []string) error {
 			}
 		case reflect.Struct:
 			if len(fieldNames) > 1 {
-				path, fieldNames = path+"."+fieldNames[0], fieldNames[1:]
+				path, fieldNames = path+"."+fieldNames[1], fieldNames[1:]
 				if err := recurMsgCheck(f.Interface(), fieldNames, path); err != nil {
 					return err
 				}
@@ -51,7 +51,7 @@ func CheckRequiredFields(msg interface{}, requiredFields []string) error {
 				return status.Errorf(codes.InvalidArgument, "required field path `%s` is not assigned", path)
 			} else if reflect.ValueOf(f).Kind() == reflect.Struct {
 				if len(fieldNames) > 1 {
-					path, fieldNames = path+"."+fieldNames[0], fieldNames[1:]
+					path, fieldNames = path+"."+fieldNames[1], fieldNames[1:]
 					if err := recurMsgCheck(f.Interface(), fieldNames, path); err != nil {
 						return err
 					}
@@ -95,7 +95,7 @@ func CheckCreateOutputOnlyFields(msg interface{}, outputOnlyFields []string) err
 			f.SetString("")
 		case reflect.Ptr:
 			if len(fieldNames) > 1 && reflect.ValueOf(f).Kind() == reflect.Struct {
-				path, fieldNames = path+"."+fieldNames[0], fieldNames[1:]
+				path, fieldNames = path+"."+fieldNames[1], fieldNames[1:]
 				if err := recurMsgCheck(f.Interface(), fieldNames, path); err != nil {
 					return err
 				}
@@ -161,7 +161,7 @@ func CheckUpdateImmutableFields(msgReq interface{}, msgUpdate interface{}, immut
 		case reflect.Ptr:
 			if !f.IsZero() {
 				if len(fieldNames) > 1 && reflect.ValueOf(f).Kind() == reflect.Struct {
-					path, fieldNames = path+"."+fieldNames[0], fieldNames[1:]
+					path, fieldNames = path+"."+fieldNames[1], fieldNames[1:]
 					if err := recurMsgCheck(f.Interface(), reflect.Indirect(reflect.ValueOf(mu)).FieldByName(fieldName).Interface(), fieldNames, path); err != nil {
 						return err
 					}
