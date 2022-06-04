@@ -11,6 +11,8 @@ require (
 	google.golang.org/protobuf v1.27.1
 )
 
+require gopkg.in/yaml.v2 v2.4.0 // indirect
+
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
