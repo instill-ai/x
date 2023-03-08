@@ -3,7 +3,7 @@ package repo
 import (
 	"encoding/json"
 	"errors"
-	"io/ioutil"
+	"os"
 )
 
 // ReadReleaseManifest reads a repo's `release-please/manifest.json` file
@@ -17,7 +17,7 @@ func ReadReleaseManifest(manifestFilepath string) (string, error) {
 		Version string `json:".,"` // field appears in JSON as key "."
 	}
 
-	content, err := ioutil.ReadFile(manifestFilepath)
+	content, err := os.ReadFile(manifestFilepath)
 	if err != nil {
 		return "", err
 	}
