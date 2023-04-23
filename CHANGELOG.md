@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0-alpha](https://github.com/instill-ai/x/compare/v0.2.0-alpha...v0.3.0-alpha) (2023-04-23)
+
+
+### Features
+
+* add temporal client option wrappers ([4e89cdb](https://github.com/instill-ai/x/commit/4e89cdb95a96ff44f2fb02c01b296a30ca1f87f7))
+
 ## [0.2.0-alpha](https://github.com/instill-ai/x/compare/v0.1.0-alpha...v0.2.0-alpha) (2022-07-06)
 
 
