@@ -349,7 +349,7 @@ func TestCheckUpdateImmutableFields_UpdateImmutableNestedStruct(t *testing.T) {
 }
 
 func TestCheckResourceID_Valid(t *testing.T) {
-	err := checkfield.CheckResourceID("local-user")
+	err := checkfield.CheckResourceID("local_user")
 	require.NoError(t, err)
 }
 
@@ -357,7 +357,7 @@ func TestCheckResourceID_InvalidShort(t *testing.T) {
 	// 0-charactor string
 	tooShort := ""
 	err := checkfield.CheckResourceID(tooShort)
-	require.EqualError(t, err, "`id` needs to be within ASCII-only 63 characters following RFC-1034 with a regexp (^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$)")
+	require.EqualError(t, err, "the ID must consist only of lowercase letters, numbers, or underscores, and its length cannot exceed 32 characters")
 }
 
 func TestCheckResourceID_InvalidLong(t *testing.T) {
@@ -365,7 +365,7 @@ func TestCheckResourceID_InvalidLong(t *testing.T) {
 	// 64-charactor string
 	tooLong := "abcdefghijklmnopqrstuvwxyz-ABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789"
 	err := checkfield.CheckResourceID(tooLong)
-	require.EqualError(t, err, "`id` needs to be within ASCII-only 63 characters following RFC-1034 with a regexp (^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$)")
+	require.EqualError(t, err, "the ID must consist only of lowercase letters, numbers, or underscores, and its length cannot exceed 32 characters")
 }
 
 func TestCheckResourceID_InvalidUUID(t *testing.T) {
@@ -375,7 +375,7 @@ func TestCheckResourceID_InvalidUUID(t *testing.T) {
 }
 
 func TestCheckResourceID_Invalid(t *testing.T) {
-	a := "local_user"
+	a := "local-user"
 	err := checkfield.CheckResourceID(a)
-	require.EqualError(t, err, "`id` needs to be within ASCII-only 63 characters following RFC-1034 with a regexp (^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$)")
+	require.EqualError(t, err, "the ID must consist only of lowercase letters, numbers, or underscores, and its length cannot exceed 32 characters")
 }
