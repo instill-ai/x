@@ -216,8 +216,8 @@ func CheckResourceID(id string) error {
 		return fmt.Errorf("`id` is not allowed to be a UUID")
 	}
 
-	if match, _ := regexp.MatchString("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", id); !match {
-		return fmt.Errorf("`id` needs to be within ASCII-only 63 characters following RFC-1034 with a regexp (^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$)")
+	if match, _ := regexp.MatchString("^[a-z_][a-z_0-9]{0,31}$", id); !match {
+		return fmt.Errorf("the ID must consist only of lowercase letters, numbers, or underscores, and its length cannot exceed 32 characters")
 	}
 	return nil
 }
