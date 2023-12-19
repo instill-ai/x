@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0-alpha](https://github.com/instill-ai/x/compare/v0.3.0-alpha...v0.4.0-alpha) (2023-12-19)
+
+
+### Features
+
+* add package to handle end-user error messages. ([#13](https://github.com/instill-ai/x/issues/13)) ([6230a89](https://github.com/instill-ai/x/commit/6230a89e386c9135fcadcaddb76ffa052fba82ea))
+
 ## [0.3.0-alpha](https://github.com/instill-ai/x/compare/v0.2.0-alpha...v0.3.0-alpha) (2023-04-23)
 
 
