@@ -22,17 +22,9 @@ func BytesToInterface(bytes []byte) (interface{}, error) {
 	return obj, nil
 }
 
+// Deprecated: use structpb.NewStruct() directly
 func MapToProtobufStruct(m map[string]interface{}) (*structpb.Struct, error) {
-	b, err := json.Marshal(m)
-	if err != nil {
-		return nil, err
-	}
-	s := &structpb.Struct{}
-	err = protojson.Unmarshal(b, s)
-	if err != nil {
-		return nil, err
-	}
-	return s, nil
+	return structpb.NewStruct(m)
 }
 
 func ProtobufStructToMap(s *structpb.Struct) (map[string]interface{}, error) {
@@ -49,7 +41,7 @@ func ProtobufStructToMap(s *structpb.Struct) (map[string]interface{}, error) {
 }
 
 func StructToProtobufStruct(s interface{}) (*structpb.Struct, error) {
-	return MapToProtobufStruct(s.(map[string]interface{}))
+	return structpb.NewStruct(s.(map[string]interface{}))
 }
 
 func ProtobufStructToStruct(s *structpb.Struct) (interface{}, error) {
