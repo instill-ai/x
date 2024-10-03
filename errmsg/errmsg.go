@@ -3,6 +3,7 @@ package errmsg
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // endUserError is an error that holds an end-user message.
@@ -18,7 +19,7 @@ func (e *endUserError) Error() string { return e.cause.Error() }
 func (e *endUserError) Unwrap() error { return e.cause }
 
 // As implements the required function to ensure errors.As can properly match
-// endUserEror targets.
+// endUserError targets.
 func (e *endUserError) As(target any) bool {
 	if tgt, ok := target.(**endUserError); ok {
 		*tgt = e
@@ -44,9 +45,23 @@ func AddMessage(err error, msg string) error {
 // Message extracts an end-user message from the error.
 func Message(err error) string {
 	for err != nil {
-		eu := new(endUserError)
-		if errors.As(err, &eu) && eu.message != "" {
-			return eu.message
+		if endUserErr, ok := err.(*endUserError); ok {
+			return endUserErr.message
+		}
+
+		// If the error was generated through errors.Join, Unwrap returns an
+		// array of errors, several of which might contain a message.
+		if joinedErr, ok := err.(interface{ Unwrap() []error }); ok {
+			unwrappedErrs := joinedErr.Unwrap()
+			msgs := make([]string, 0, len(unwrappedErrs))
+			for _, uwe := range unwrappedErrs {
+				msg := Message(uwe)
+				if msg != "" {
+					msgs = append(msgs, Message(uwe))
+				}
+			}
+
+			return strings.Join(msgs, " ")
 		}
 
 		err = errors.Unwrap(err)
