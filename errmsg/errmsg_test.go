@@ -49,17 +49,18 @@ func TestAddAndExtractMessage(t *testing.T) {
 		},
 		{
 			name:    "multi-message error",
-			wantMsg: "An error happened. Something went wrong.",
-			wantErr: "bang: boom",
-			err: AddMessage(
-				// handle error coming from downstream
-				fmt.Errorf("bang: %w",
-					// downstream error also contains message
-					AddMessage(errors.New("boom"), "Something went wrong."),
-				),
-				// add message to downstream error
-				"An error happened.",
-			),
+			wantMsg: "Please check your input. Something went wrong in condition 1. Condition 2 failed.",
+			wantErr: "checking conditions: evaluating condition 1: boom\nbang",
+			err: func() error {
+				cond2Err := AddMessage(fmt.Errorf("bang"), "Condition 2 failed.")
+				cond1Err := fmt.Errorf(
+					"evaluating condition 1: %w",
+					AddMessage(fmt.Errorf("boom"), "Something went wrong in condition 1."),
+				)
+
+				jointErr := fmt.Errorf("checking conditions: %w", errors.Join(cond1Err, cond2Err))
+				return AddMessage(jointErr, "Please check your input.")
+			}(),
 		},
 	}
 
