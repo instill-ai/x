@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0-alpha](https://github.com/instill-ai/x/compare/v0.4.0-alpha...v0.5.0-alpha) (2024-10-03)
+
+
+### Features
+
+* **errmsg:** support errors wrapped through errors.Join ([#21](https://github.com/instill-ai/x/issues/21)) ([5ced228](https://github.com/instill-ai/x/commit/5ced228b749839129417cdd5214daad774ce043d))
+
 ## [0.4.0-alpha](https://github.com/instill-ai/x/compare/v0.3.0-alpha...v0.4.0-alpha) (2023-12-19)
 
 
