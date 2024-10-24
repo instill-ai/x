@@ -19,7 +19,7 @@ import (
 )
 
 type MinioI interface {
-	UploadFile(ctx context.Context, filePath string, fileContent any, fileMimeType string) (url string, objectInfo *miniogo.ObjectInfo, err error)
+	UploadFile(ctx context.Context, logger *zap.Logger, filePath string, fileContent any, fileMimeType string) (url string, objectInfo *miniogo.ObjectInfo, err error)
 	UploadFileBytes(ctx context.Context, logger *zap.Logger, filePath string, fileBytes []byte, fileMimeType string) (url string, objectInfo *miniogo.ObjectInfo, err error)
 	DeleteFile(ctx context.Context, logger *zap.Logger, filePath string) (err error)
 	GetFile(ctx context.Context, logger *zap.Logger, filePath string) ([]byte, error)
@@ -86,9 +86,9 @@ func NewMinioClientAndInitBucket(ctx context.Context, cfg *Config, logger *zap.L
 	return &minio{client: client, bucket: cfg.BucketName}, nil
 }
 
-func (m *minio) UploadFile(ctx context.Context, filePath string, fileContent any, fileMimeType string) (url string, objectInfo *miniogo.ObjectInfo, err error) {
+func (m *minio) UploadFile(ctx context.Context, logger *zap.Logger, filePath string, fileContent any, fileMimeType string) (url string, objectInfo *miniogo.ObjectInfo, err error) {
 	jsonData, _ := json.Marshal(fileContent)
-	return m.UploadFileBytes(ctx, nil, filePath, jsonData, fileMimeType)
+	return m.UploadFileBytes(ctx, logger, filePath, jsonData, fileMimeType)
 }
 
 func (m *minio) UploadFileBytes(ctx context.Context, logger *zap.Logger, filePath string, fileBytes []byte, fileMimeType string) (url string, objectInfo *miniogo.ObjectInfo, err error) {

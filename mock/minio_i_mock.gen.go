@@ -1370,7 +1370,7 @@ func (mmUploadFile *mMinioIMockUploadFile) invocationsDone() bool {
 }
 
 // UploadFile implements minio.MinioI
-func (mmUploadFile *MinioIMock) UploadFile(ctx context.Context, filePath string, fileContent any, fileMimeType string) (url string, objectInfo *miniogo.ObjectInfo, err error) {
+func (mmUploadFile *MinioIMock) UploadFile(ctx context.Context, logger *zap.Logger, filePath string, fileContent any, fileMimeType string) (url string, objectInfo *miniogo.ObjectInfo, err error) {
 	mm_atomic.AddUint64(&mmUploadFile.beforeUploadFileCounter, 1)
 	defer mm_atomic.AddUint64(&mmUploadFile.afterUploadFileCounter, 1)
 
