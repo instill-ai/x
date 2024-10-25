@@ -37,7 +37,12 @@ func TestMinio(t *testing.T) {
 	data["uid"] = uid.String()
 	jsonBytes, _ := json.Marshal(data)
 
-	url, stat, err := mc.UploadFile(ctx, log, fileName.String(), data, "application/json")
+	url, stat, err := mc.UploadFile(ctx, log, &miniox.UploadFileParam{
+		FilePath:     fileName.String(),
+		FileContent:  data,
+		FileMimeType: "application/json",
+		ExpiryGroup:  miniox.FreePlanExpiry,
+	})
 	require.NoError(t, err)
 	t.Log("url:", url)
 	t.Log("size:", stat.Size)
