@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0-alpha](https://github.com/instill-ai/x/compare/v0.5.0-alpha...v0.6.0-alpha) (2024-10-25)
+
+
+### Features
+
+* **minio:** add expiry tag and rule ([#23](https://github.com/instill-ai/x/issues/23)) ([6659d46](https://github.com/instill-ai/x/commit/6659d4662da56fd7af36034b3756f856607d61de))
+
 ## [0.5.0-alpha](https://github.com/instill-ai/x/compare/v0.4.0-alpha...v0.5.0-alpha) (2024-10-03)
 
 
