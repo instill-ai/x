@@ -41,7 +41,6 @@ func TestMinio(t *testing.T) {
 		FilePath:     fileName.String(),
 		FileContent:  data,
 		FileMimeType: "application/json",
-		ExpiryGroup:  miniox.FreePlanExpiry,
 	})
 	require.NoError(t, err)
 	t.Log("url:", url)
@@ -50,4 +49,10 @@ func TestMinio(t *testing.T) {
 	fileBytes, err := mc.GetFile(ctx, log, fileName.String())
 	require.NoError(t, err)
 	require.Equal(t, jsonBytes, fileBytes)
+
+	err = mc.DeleteFile(ctx, log, fileName.String())
+	require.NoError(t, err)
+
+	_, err = mc.GetFile(ctx, log, fileName.String())
+	require.Error(t, err)
 }

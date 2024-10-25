@@ -26,10 +26,9 @@ type MinioI interface {
 	GetFilesByPaths(ctx context.Context, logger *zap.Logger, filePaths []string) ([]FileContent, error)
 }
 
-type ExpiryGroup string
-
-func (g ExpiryGroup) String() string {
-	return string(g)
+type ExpiryRule struct {
+	Tag            string
+	ExpirationDays int
 }
 
 const (
@@ -37,25 +36,15 @@ const (
 
 	StatusEnabled = "Enabled"
 	ExpiryTag     = "expiry-group"
-
-	FreePlanExpiry       ExpiryGroup = "free-plan-expiry"
-	ProPlanExpiry        ExpiryGroup = "pro-plan-expiry"
-	TeamPlanExpiry       ExpiryGroup = "team-plan-expiry"
-	EnterprisePlanExpiry ExpiryGroup = "enterprise-plan-expiry"
 )
 
-var expiryTimeConfig = map[ExpiryGroup]int{
-	FreePlanExpiry: 3,
-	ProPlanExpiry:  7,
-	TeamPlanExpiry: 30,
-}
-
 type minio struct {
-	client *miniogo.Client
-	bucket string
+	client           *miniogo.Client
+	bucket           string
+	expiryRuleConfig map[string]int
 }
 
-func NewMinioClientAndInitBucket(ctx context.Context, cfg *Config, logger *zap.Logger) (MinioI, error) {
+func NewMinioClientAndInitBucket(ctx context.Context, cfg *Config, logger *zap.Logger, expiryRules ...ExpiryRule) (MinioI, error) {
 	logger.Info("Initializing Minio client and bucket...")
 
 	endpoint := net.JoinHostPort(cfg.Host, cfg.Port)
@@ -98,45 +87,24 @@ func NewMinioClientAndInitBucket(ctx context.Context, cfg *Config, logger *zap.L
 				Days: lifecycle.ExpirationDays(30),
 			},
 		},
-		{
-			ID:     "free-plan-rule",
+	}
+
+	expiryRuleConfig := make(map[string]int)
+	for _, expiryRule := range expiryRules {
+		expiryRuleConfig[expiryRule.Tag] = expiryRule.ExpirationDays
+		lccfg.Rules = append(lccfg.Rules, lifecycle.Rule{
+			ID:     expiryRule.Tag,
 			Status: StatusEnabled,
 			Expiration: lifecycle.Expiration{
-				Days: lifecycle.ExpirationDays(expiryTimeConfig[FreePlanExpiry]),
+				Days: lifecycle.ExpirationDays(expiryRule.ExpirationDays),
 			},
 			RuleFilter: lifecycle.Filter{
 				Tag: lifecycle.Tag{
 					Key:   ExpiryTag,
-					Value: FreePlanExpiry.String(),
+					Value: expiryRule.Tag,
 				},
 			},
-		},
-		{
-			ID:     "pro-plan-rule",
-			Status: StatusEnabled,
-			Expiration: lifecycle.Expiration{
-				Days: lifecycle.ExpirationDays(expiryTimeConfig[ProPlanExpiry]),
-			},
-			RuleFilter: lifecycle.Filter{
-				Tag: lifecycle.Tag{
-					Key:   ExpiryTag,
-					Value: ProPlanExpiry.String(),
-				},
-			},
-		},
-		{
-			ID:     "team-plan-rule",
-			Status: StatusEnabled,
-			Expiration: lifecycle.Expiration{
-				Days: lifecycle.ExpirationDays(expiryTimeConfig[TeamPlanExpiry]),
-			},
-			RuleFilter: lifecycle.Filter{
-				Tag: lifecycle.Tag{
-					Key:   ExpiryTag,
-					Value: TeamPlanExpiry.String(),
-				},
-			},
-		},
+		})
 	}
 
 	err = client.SetBucketLifecycle(ctx, cfg.BucketName, lccfg)
@@ -145,30 +113,30 @@ func NewMinioClientAndInitBucket(ctx context.Context, cfg *Config, logger *zap.L
 		return nil, err
 	}
 
-	return &minio{client: client, bucket: cfg.BucketName}, nil
+	return &minio{client: client, bucket: cfg.BucketName, expiryRuleConfig: expiryRuleConfig}, nil
 }
 
 type UploadFileParam struct {
-	FilePath     string
-	FileContent  any
-	FileMimeType string
-	ExpiryGroup  ExpiryGroup
+	FilePath      string
+	FileContent   any
+	FileMimeType  string
+	ExpiryRuleTag string
 }
 
 type UploadFileBytesParam struct {
-	FilePath     string
-	FileBytes    []byte
-	FileMimeType string
-	ExpiryGroup  ExpiryGroup
+	FilePath      string
+	FileBytes     []byte
+	FileMimeType  string
+	ExpiryRuleTag string
 }
 
 func (m *minio) UploadFile(ctx context.Context, logger *zap.Logger, param *UploadFileParam) (url string, objectInfo *miniogo.ObjectInfo, err error) {
 	jsonData, _ := json.Marshal(param.FileContent)
 	return m.UploadFileBytes(ctx, logger, &UploadFileBytesParam{
-		FilePath:     param.FilePath,
-		FileBytes:    jsonData,
-		FileMimeType: param.FileMimeType,
-		ExpiryGroup:  param.ExpiryGroup,
+		FilePath:      param.FilePath,
+		FileBytes:     jsonData,
+		FileMimeType:  param.FileMimeType,
+		ExpiryRuleTag: param.ExpiryRuleTag,
 	})
 }
 
@@ -179,7 +147,7 @@ func (m *minio) UploadFileBytes(ctx context.Context, logger *zap.Logger, param *
 	// Create the file path with folder structure
 	_, err = m.client.PutObject(ctx, m.bucket, param.FilePath, reader, int64(len(param.FileBytes)), miniogo.PutObjectOptions{
 		ContentType: param.FileMimeType,
-		UserTags:    map[string]string{ExpiryTag: param.ExpiryGroup.String()},
+		UserTags:    map[string]string{ExpiryTag: param.ExpiryRuleTag},
 	})
 	if err != nil {
 		logger.Error("Failed to upload file to MinIO", zap.Error(err))
@@ -193,9 +161,9 @@ func (m *minio) UploadFileBytes(ctx context.Context, logger *zap.Logger, param *
 	}
 
 	// Generate the presigned URL
-	expiryDays, ok := expiryTimeConfig[param.ExpiryGroup]
-	if !ok {
-		expiryDays = 30
+	expiryDays, ok := m.expiryRuleConfig[param.ExpiryRuleTag]
+	if !ok || expiryDays > 7 { // presignedURL Expires cannot be greater than 7 days.
+		expiryDays = 7
 	}
 	expiryDuration := time.Hour * 24 * time.Duration(expiryDays)
 	presignedURL, err := m.client.PresignedGetObject(ctx, m.bucket, param.FilePath, expiryDuration, nil)
