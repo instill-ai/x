@@ -67,16 +67,15 @@ func NewMinioClientAndInitBucket(ctx context.Context, cfg *Config, logger *zap.L
 	}
 	if exists {
 		logger.Info("Bucket already exists", zap.String("bucket", cfg.BucketName))
-		return &minio{client: client, bucket: cfg.BucketName}, nil
+	} else {
+		if err = client.MakeBucket(ctx, cfg.BucketName, miniogo.MakeBucketOptions{
+			Region: Location,
+		}); err != nil {
+			logger.Error("creating Bucket failed", zap.Error(err))
+			return nil, err
+		}
+		logger.Info("Successfully created bucket", zap.String("bucket", cfg.BucketName))
 	}
-
-	if err = client.MakeBucket(ctx, cfg.BucketName, miniogo.MakeBucketOptions{
-		Region: Location,
-	}); err != nil {
-		logger.Error("creating Bucket failed", zap.Error(err))
-		return nil, err
-	}
-	logger.Info("Successfully created bucket", zap.String("bucket", cfg.BucketName))
 
 	lccfg := lifecycle.NewConfiguration()
 	lccfg.Rules = []lifecycle.Rule{
