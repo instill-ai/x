@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 
 	"google.golang.org/grpc/metadata"
@@ -37,7 +38,9 @@ func UploadFile(ctx context.Context, uploadURL string, data []byte, contentType 
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("upload failed with status %d: %s", resp.StatusCode, string(body))
+		log.Printf("upload failed with status %d", resp.StatusCode)
+		log.Printf("response body: %s", string(body))
+		return fmt.Errorf("upload failed")
 	}
 
 	return nil
