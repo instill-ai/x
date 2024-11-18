@@ -5,13 +5,13 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 
+	"go.uber.org/zap"
 	"google.golang.org/grpc/metadata"
 )
 
-func UploadFile(ctx context.Context, uploadURL string, data []byte, contentType string) error {
+func UploadFile(ctx context.Context, logger *zap.Logger, uploadURL string, data []byte, contentType string) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, nil)
 
@@ -38,9 +38,13 @@ func UploadFile(ctx context.Context, uploadURL string, data []byte, contentType 
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		log.Printf("upload failed with status %d", resp.StatusCode)
-		log.Printf("response body: %s", string(body))
-		return fmt.Errorf("upload failed")
+		err := fmt.Errorf("failed to upload file")
+		logger.Error("Failed to upload file to MinIO",
+			zap.Binary("body", body),
+			zap.Int("status", resp.StatusCode),
+			zap.Error(err),
+		)
+		return err
 	}
 
 	return nil
