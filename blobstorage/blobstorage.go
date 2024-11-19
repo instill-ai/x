@@ -3,6 +3,7 @@ package blobstorage
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,7 +29,11 @@ func UploadFile(ctx context.Context, logger *zap.Logger, uploadURL string, data 
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Del("Authorization")
 
-	client := &http.Client{}
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
 	resp, err := client.Do(req)
 
 	if err != nil {
