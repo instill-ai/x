@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.0-alpha](https://github.com/instill-ai/x/compare/v0.5.0-alpha...v0.6.0-alpha) (2024-11-19)
+
+
+### Features
+
+* collect shared logic for blob storage and minio ([#27](https://github.com/instill-ai/x/issues/27)) ([36280f1](https://github.com/instill-ai/x/commit/36280f1781206f99f176732964d6ce9080d2f288))
+* **minio:** add expiry tag and rule ([#23](https://github.com/instill-ai/x/issues/23)) ([6659d46](https://github.com/instill-ai/x/commit/6659d4662da56fd7af36034b3756f856607d61de))
+
+
+### Bug Fixes
+
+* **minio:** set life cycle config on existing bucket ([#25](https://github.com/instill-ai/x/issues/25)) ([3b853d0](https://github.com/instill-ai/x/commit/3b853d0b8656d116798e31cffa2db4dab84724a2))
+
 ## [0.5.0-alpha](https://github.com/instill-ai/x/compare/v0.4.0-alpha...v0.5.0-alpha) (2024-10-03)
 
 
