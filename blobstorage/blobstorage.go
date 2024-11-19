@@ -42,6 +42,7 @@ func UploadFile(ctx context.Context, logger *zap.Logger, uploadURL string, data 
 		logger.Error("Failed to upload file to MinIO",
 			zap.Binary("body", body),
 			zap.Int("status", resp.StatusCode),
+			zap.String("Uploading URL", uploadURL),
 			zap.Error(err),
 		)
 		return err
