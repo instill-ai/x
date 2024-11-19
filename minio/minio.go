@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -276,4 +277,53 @@ func GenerateInputRefID(prefix string) string {
 func GenerateOutputRefID(prefix string) string {
 	referenceUID, _ := uuid.NewV4()
 	return prefix + "/output/" + referenceUID.String()
+}
+
+// It's used for the operations that don't need to initialize a bucket
+// We will refactor the Minio shared logic in the future
+type minioClientWrapper struct {
+	client *miniogo.Client
+}
+
+// NewMinioClient returns a new minio client
+func NewMinioClient(ctx context.Context, cfg *Config, logger *zap.Logger) (*minioClientWrapper, error) {
+	logger.Info("Initializing Minio client")
+
+	endpoint := net.JoinHostPort(cfg.Host, cfg.Port)
+	client, err := miniogo.New(endpoint, &miniogo.Options{
+		Creds:  credentials.NewStaticV4(cfg.RootUser, cfg.RootPwd, ""),
+		Secure: cfg.Secure,
+	})
+	if err != nil {
+		logger.Error("cannot connect to minio",
+			zap.String("host:port", cfg.Host+":"+cfg.Port),
+			zap.String("user", cfg.RootUser),
+			zap.String("pwd", cfg.RootPwd), zap.Error(err))
+		return nil, err
+	}
+	return &minioClientWrapper{client: client}, nil
+}
+
+// GetFile fetches a file from minio
+func (m *minioClientWrapper) GetFile(ctx context.Context, bucketName, objectPath string) (data []byte, contentType string, err error) {
+	object, err := m.client.GetObject(ctx, bucketName, objectPath, miniogo.GetObjectOptions{})
+
+	if err != nil {
+		return nil, "", fmt.Errorf("get object: %w", err)
+	}
+
+	defer object.Close()
+
+	info, err := object.Stat()
+
+	if err != nil {
+		return nil, "", fmt.Errorf("get object info: %w", err)
+	}
+	data, err = io.ReadAll(object)
+
+	if err != nil {
+		return nil, "", fmt.Errorf("read object: %w", err)
+	}
+
+	return data, info.ContentType, nil
 }
