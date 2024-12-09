@@ -6,6 +6,7 @@ import (
 
 	"google.golang.org/grpc/metadata"
 
+	"github.com/gofrs/uuid"
 	"github.com/instill-ai/x/constant"
 )
 
@@ -18,11 +19,11 @@ func GetRequestSingleHeader(ctx context.Context, header string) string {
 	return metaHeader[0]
 }
 
-func GetRequesterUIDAndUserUID(ctx context.Context) (string, string) {
+func GetRequesterUIDAndUserUID(ctx context.Context) (uuid.UUID, uuid.UUID) {
 	requesterUID := GetRequestSingleHeader(ctx, constant.HeaderRequesterUIDKey)
 	userUID := GetRequestSingleHeader(ctx, constant.HeaderUserUIDKey)
 	if strings.TrimSpace(requesterUID) == "" {
 		requesterUID = userUID
 	}
-	return requesterUID, userUID
+	return uuid.FromStringOrNil(requesterUID), uuid.FromStringOrNil(userUID)
 }

@@ -14,15 +14,18 @@ import (
 )
 
 func TestGetRequesterUIDAndUserUID(t *testing.T) {
-	requesterUID := uuid.Must(uuid.NewV4()).String()
-	userUID := uuid.Must(uuid.NewV4()).String()
+	requesterUIDStr := uuid.Must(uuid.NewV4()).String()
+	userUIDStr := uuid.Must(uuid.NewV4()).String()
 	m := make(map[string]string)
-	m[constant.HeaderRequesterUIDKey] = requesterUID
-	m[constant.HeaderUserUIDKey] = userUID
+	m[constant.HeaderRequesterUIDKey] = requesterUIDStr
+	m[constant.HeaderUserUIDKey] = userUIDStr
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.New(m))
 
 	c := qt.New(t)
 	checkRequesterUID, checkUserUID := resource.GetRequesterUIDAndUserUID(ctx)
+	requesterUID := uuid.FromStringOrNil(requesterUIDStr)
+	userUID := uuid.FromStringOrNil(userUIDStr)
+
 	c.Check(checkRequesterUID, qt.Equals, requesterUID)
 	c.Check(checkUserUID, qt.Equals, userUID)
 }
