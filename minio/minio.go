@@ -79,15 +79,7 @@ func NewMinioClientAndInitBucket(ctx context.Context, cfg *Config, logger *zap.L
 	}
 
 	lccfg := lifecycle.NewConfiguration()
-	lccfg.Rules = []lifecycle.Rule{
-		{
-			ID:     "expire-bucket-objects",
-			Status: StatusEnabled,
-			Expiration: lifecycle.Expiration{
-				Days: lifecycle.ExpirationDays(30),
-			},
-		},
-	}
+	lccfg.Rules = make([]lifecycle.Rule, 0, len(expiryRules))
 
 	expiryRuleConfig := make(map[string]int)
 	for _, expiryRule := range expiryRules {
