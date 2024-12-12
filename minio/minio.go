@@ -45,8 +45,12 @@ type minio struct {
 	expiryRuleConfig map[string]int
 }
 
+// NewMinioClientAndInitBucket initializes a MinIO bucket (creating it if it
+// doesn't exist and applying the lifecycle rules specified in the
+// configuration) and returns a client to interact with such bucket.
 func NewMinioClientAndInitBucket(ctx context.Context, cfg *Config, logger *zap.Logger, expiryRules ...ExpiryRule) (MinioI, error) {
-	logger.Info("Initializing Minio client and bucket...")
+	logger = logger.With(zap.String("bucket", cfg.BucketName))
+	logger.Info("Initializing MinIO client and bucket")
 
 	endpoint := net.JoinHostPort(cfg.Host, cfg.Port)
 	client, err := miniogo.New(endpoint, &miniogo.Options{
@@ -54,28 +58,23 @@ func NewMinioClientAndInitBucket(ctx context.Context, cfg *Config, logger *zap.L
 		Secure: cfg.Secure,
 	})
 	if err != nil {
-		logger.Error("cannot connect to minio",
-			zap.String("host:port", cfg.Host+":"+cfg.Port),
-			zap.String("user", cfg.RootUser),
-			zap.String("pwd", cfg.RootPwd), zap.Error(err))
-		return nil, err
+		return nil, fmt.Errorf("connecting to MinIO: %w", err)
 	}
 
 	exists, err := client.BucketExists(ctx, cfg.BucketName)
 	if err != nil {
-		logger.Error("failed in checking BucketExists", zap.Error(err))
-		return nil, err
+		return nil, fmt.Errorf("checking bucket existence: %w", err)
 	}
-	if exists {
-		logger.Info("Bucket already exists", zap.String("bucket", cfg.BucketName))
-	} else {
+
+	if !exists {
 		if err = client.MakeBucket(ctx, cfg.BucketName, miniogo.MakeBucketOptions{
 			Region: Location,
 		}); err != nil {
-			logger.Error("creating Bucket failed", zap.Error(err))
-			return nil, err
+			return nil, fmt.Errorf("creating bucket: %w", err)
 		}
-		logger.Info("Successfully created bucket", zap.String("bucket", cfg.BucketName))
+		logger.Info("Successfully created bucket")
+	} else {
+		logger.Info("Bucket already exists")
 	}
 
 	lccfg := lifecycle.NewConfiguration()
@@ -114,8 +113,7 @@ func NewMinioClientAndInitBucket(ctx context.Context, cfg *Config, logger *zap.L
 
 	err = client.SetBucketLifecycle(ctx, cfg.BucketName, lccfg)
 	if err != nil {
-		logger.Error("setting Bucket lifecycle failed", zap.Error(err))
-		return nil, err
+		return nil, fmt.Errorf("applying lifecycle rules: %w", err)
 	}
 
 	return &minio{client: client, bucket: cfg.BucketName, expiryRuleConfig: expiryRuleConfig}, nil
@@ -285,14 +283,14 @@ func GenerateOutputRefID(prefix string) string {
 }
 
 // It's used for the operations that don't need to initialize a bucket
-// We will refactor the Minio shared logic in the future
+// We will refactor the MinIO shared logic in the future
 type minioClientWrapper struct {
 	client *miniogo.Client
 }
 
-// NewMinioClient returns a new minio client
+// NewMinioClient returns a new MinIO client.
 func NewMinioClient(ctx context.Context, cfg *Config, logger *zap.Logger) (*minioClientWrapper, error) {
-	logger.Info("Initializing Minio client")
+	logger.Info("Initializing MinIO client")
 
 	endpoint := net.JoinHostPort(cfg.Host, cfg.Port)
 	client, err := miniogo.New(endpoint, &miniogo.Options{
@@ -300,12 +298,9 @@ func NewMinioClient(ctx context.Context, cfg *Config, logger *zap.Logger) (*mini
 		Secure: cfg.Secure,
 	})
 	if err != nil {
-		logger.Error("cannot connect to minio",
-			zap.String("host:port", cfg.Host+":"+cfg.Port),
-			zap.String("user", cfg.RootUser),
-			zap.String("pwd", cfg.RootPwd), zap.Error(err))
-		return nil, err
+		return nil, fmt.Errorf("connecting to MinIO: %w", err)
 	}
+
 	return &minioClientWrapper{client: client}, nil
 }
 
