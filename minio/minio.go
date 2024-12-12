@@ -84,6 +84,19 @@ func NewMinioClientAndInitBucket(ctx context.Context, cfg *Config, logger *zap.L
 	expiryRuleConfig := make(map[string]int)
 	for _, expiryRule := range expiryRules {
 		expiryRuleConfig[expiryRule.Tag] = expiryRule.ExpirationDays
+		if expiryRule.ExpirationDays <= 0 {
+			// On MinIO, we can define expiration rules for tags, but we can't
+			// set a "no expiration" rule. Clients, however, might want to have
+			// such rules for certain objects. A 0 expiration day rule means no
+			// expiration. We won't set this rule but we'll keep the tag in the
+			// `expiryRuleConfig` object.
+			logger.Info(
+				"Skipping lifecycle rule - tag will have infinite retention",
+				zap.String("tag", expiryRule.Tag),
+			)
+			continue
+		}
+
 		lccfg.Rules = append(lccfg.Rules, lifecycle.Rule{
 			ID:     expiryRule.Tag,
 			Status: StatusEnabled,
@@ -154,7 +167,7 @@ func (m *minio) UploadFileBytes(ctx context.Context, logger *zap.Logger, param *
 
 	// Generate the presigned URL
 	expiryDays, ok := m.expiryRuleConfig[param.ExpiryRuleTag]
-	if !ok || expiryDays > 7 { // presignedURL Expires cannot be greater than 7 days.
+	if !ok || expiryDays <= 0 || expiryDays > 7 { // presignedURL Expires cannot be greater than 7 days.
 		expiryDays = 7
 	}
 	expiryDuration := time.Hour * 24 * time.Duration(expiryDays)
