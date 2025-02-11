@@ -31,13 +31,14 @@ func TestMinio(t *testing.T) {
 
 	t.Log("test upload file to minio")
 	fileName, _ := uuid.NewV4()
-	uid, _ := uuid.NewV4()
 
+	userUID := uuid.Must(uuid.NewV4())
 	data := make(map[string]string)
-	data["uid"] = uid.String()
+	data["uid"] = uuid.Must(uuid.NewV4()).String()
 	jsonBytes, _ := json.Marshal(data)
 
-	url, stat, err := mc.UploadFile(ctx, log, &miniox.UploadFileParam{
+	url, stat, err := mc.UploadFile(ctx, &miniox.UploadFileParam{
+		UserUID:      userUID,
 		FilePath:     fileName.String(),
 		FileContent:  data,
 		FileMimeType: "application/json",
@@ -46,13 +47,13 @@ func TestMinio(t *testing.T) {
 	t.Log("url:", url)
 	t.Log("size:", stat.Size)
 
-	fileBytes, err := mc.GetFile(ctx, log, fileName.String())
+	fileBytes, err := mc.GetFile(ctx, userUID, fileName.String())
 	require.NoError(t, err)
 	require.Equal(t, jsonBytes, fileBytes)
 
-	err = mc.DeleteFile(ctx, log, fileName.String())
+	err = mc.DeleteFile(ctx, userUID, fileName.String())
 	require.NoError(t, err)
 
-	_, err = mc.GetFile(ctx, log, fileName.String())
+	_, err = mc.GetFile(ctx, userUID, fileName.String())
 	require.Error(t, err)
 }

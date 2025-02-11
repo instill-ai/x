@@ -8,6 +8,7 @@ import (
 	mm_atomic "sync/atomic"
 	mm_time "time"
 
+	"github.com/gofrs/uuid"
 	"github.com/gojuno/minimock/v3"
 	mm_minio "github.com/instill-ai/x/minio"
 	miniogo "github.com/minio/minio-go/v7"
@@ -19,40 +20,47 @@ type MinioIMock struct {
 	t          minimock.Tester
 	finishOnce sync.Once
 
-	funcDeleteFile          func(ctx context.Context, logger *zap.Logger, filePath string) (err error)
+	funcDeleteFile          func(ctx context.Context, userUID uuid.UUID, filePath string) (err error)
 	funcDeleteFileOrigin    string
-	inspectFuncDeleteFile   func(ctx context.Context, logger *zap.Logger, filePath string)
+	inspectFuncDeleteFile   func(ctx context.Context, userUID uuid.UUID, filePath string)
 	afterDeleteFileCounter  uint64
 	beforeDeleteFileCounter uint64
 	DeleteFileMock          mMinioIMockDeleteFile
 
-	funcGetFile          func(ctx context.Context, logger *zap.Logger, filePath string) (ba1 []byte, err error)
+	funcGetFile          func(ctx context.Context, userUID uuid.UUID, filePath string) (ba1 []byte, err error)
 	funcGetFileOrigin    string
-	inspectFuncGetFile   func(ctx context.Context, logger *zap.Logger, filePath string)
+	inspectFuncGetFile   func(ctx context.Context, userUID uuid.UUID, filePath string)
 	afterGetFileCounter  uint64
 	beforeGetFileCounter uint64
 	GetFileMock          mMinioIMockGetFile
 
-	funcGetFilesByPaths          func(ctx context.Context, logger *zap.Logger, filePaths []string) (fa1 []mm_minio.FileContent, err error)
+	funcGetFilesByPaths          func(ctx context.Context, userUID uuid.UUID, filePaths []string) (fa1 []mm_minio.FileContent, err error)
 	funcGetFilesByPathsOrigin    string
-	inspectFuncGetFilesByPaths   func(ctx context.Context, logger *zap.Logger, filePaths []string)
+	inspectFuncGetFilesByPaths   func(ctx context.Context, userUID uuid.UUID, filePaths []string)
 	afterGetFilesByPathsCounter  uint64
 	beforeGetFilesByPathsCounter uint64
 	GetFilesByPathsMock          mMinioIMockGetFilesByPaths
 
-	funcUploadFile          func(ctx context.Context, logger *zap.Logger, param *mm_minio.UploadFileParam) (url string, objectInfo *miniogo.ObjectInfo, err error)
+	funcUploadFile          func(ctx context.Context, up1 *mm_minio.UploadFileParam) (url string, objectInfo *miniogo.ObjectInfo, err error)
 	funcUploadFileOrigin    string
-	inspectFuncUploadFile   func(ctx context.Context, logger *zap.Logger, param *mm_minio.UploadFileParam)
+	inspectFuncUploadFile   func(ctx context.Context, up1 *mm_minio.UploadFileParam)
 	afterUploadFileCounter  uint64
 	beforeUploadFileCounter uint64
 	UploadFileMock          mMinioIMockUploadFile
 
-	funcUploadFileBytes          func(ctx context.Context, logger *zap.Logger, param *mm_minio.UploadFileBytesParam) (url string, objectInfo *miniogo.ObjectInfo, err error)
+	funcUploadFileBytes          func(ctx context.Context, up1 *mm_minio.UploadFileBytesParam) (url string, objectInfo *miniogo.ObjectInfo, err error)
 	funcUploadFileBytesOrigin    string
-	inspectFuncUploadFileBytes   func(ctx context.Context, logger *zap.Logger, param *mm_minio.UploadFileBytesParam)
+	inspectFuncUploadFileBytes   func(ctx context.Context, up1 *mm_minio.UploadFileBytesParam)
 	afterUploadFileBytesCounter  uint64
 	beforeUploadFileBytesCounter uint64
 	UploadFileBytesMock          mMinioIMockUploadFileBytes
+
+	funcWithLogger          func(lp1 *zap.Logger) (m1 mm_minio.MinioI)
+	funcWithLoggerOrigin    string
+	inspectFuncWithLogger   func(lp1 *zap.Logger)
+	afterWithLoggerCounter  uint64
+	beforeWithLoggerCounter uint64
+	WithLoggerMock          mMinioIMockWithLogger
 }
 
 // NewMinioIMock returns a mock for mm_minio.MinioI
@@ -77,6 +85,9 @@ func NewMinioIMock(t minimock.Tester) *MinioIMock {
 
 	m.UploadFileBytesMock = mMinioIMockUploadFileBytes{mock: m}
 	m.UploadFileBytesMock.callArgs = []*MinioIMockUploadFileBytesParams{}
+
+	m.WithLoggerMock = mMinioIMockWithLogger{mock: m}
+	m.WithLoggerMock.callArgs = []*MinioIMockWithLoggerParams{}
 
 	t.Cleanup(m.MinimockFinish)
 
@@ -110,14 +121,14 @@ type MinioIMockDeleteFileExpectation struct {
 // MinioIMockDeleteFileParams contains parameters of the MinioI.DeleteFile
 type MinioIMockDeleteFileParams struct {
 	ctx      context.Context
-	logger   *zap.Logger
+	userUID  uuid.UUID
 	filePath string
 }
 
 // MinioIMockDeleteFileParamPtrs contains pointers to parameters of the MinioI.DeleteFile
 type MinioIMockDeleteFileParamPtrs struct {
 	ctx      *context.Context
-	logger   **zap.Logger
+	userUID  *uuid.UUID
 	filePath *string
 }
 
@@ -130,7 +141,7 @@ type MinioIMockDeleteFileResults struct {
 type MinioIMockDeleteFileExpectationOrigins struct {
 	origin         string
 	originCtx      string
-	originLogger   string
+	originUserUID  string
 	originFilePath string
 }
 
@@ -145,7 +156,7 @@ func (mmDeleteFile *mMinioIMockDeleteFile) Optional() *mMinioIMockDeleteFile {
 }
 
 // Expect sets up expected params for MinioI.DeleteFile
-func (mmDeleteFile *mMinioIMockDeleteFile) Expect(ctx context.Context, logger *zap.Logger, filePath string) *mMinioIMockDeleteFile {
+func (mmDeleteFile *mMinioIMockDeleteFile) Expect(ctx context.Context, userUID uuid.UUID, filePath string) *mMinioIMockDeleteFile {
 	if mmDeleteFile.mock.funcDeleteFile != nil {
 		mmDeleteFile.mock.t.Fatalf("MinioIMock.DeleteFile mock is already set by Set")
 	}
@@ -158,7 +169,7 @@ func (mmDeleteFile *mMinioIMockDeleteFile) Expect(ctx context.Context, logger *z
 		mmDeleteFile.mock.t.Fatalf("MinioIMock.DeleteFile mock is already set by ExpectParams functions")
 	}
 
-	mmDeleteFile.defaultExpectation.params = &MinioIMockDeleteFileParams{ctx, logger, filePath}
+	mmDeleteFile.defaultExpectation.params = &MinioIMockDeleteFileParams{ctx, userUID, filePath}
 	mmDeleteFile.defaultExpectation.expectationOrigins.origin = minimock.CallerInfo(1)
 	for _, e := range mmDeleteFile.expectations {
 		if minimock.Equal(e.params, mmDeleteFile.defaultExpectation.params) {
@@ -192,8 +203,8 @@ func (mmDeleteFile *mMinioIMockDeleteFile) ExpectCtxParam1(ctx context.Context) 
 	return mmDeleteFile
 }
 
-// ExpectLoggerParam2 sets up expected param logger for MinioI.DeleteFile
-func (mmDeleteFile *mMinioIMockDeleteFile) ExpectLoggerParam2(logger *zap.Logger) *mMinioIMockDeleteFile {
+// ExpectUserUIDParam2 sets up expected param userUID for MinioI.DeleteFile
+func (mmDeleteFile *mMinioIMockDeleteFile) ExpectUserUIDParam2(userUID uuid.UUID) *mMinioIMockDeleteFile {
 	if mmDeleteFile.mock.funcDeleteFile != nil {
 		mmDeleteFile.mock.t.Fatalf("MinioIMock.DeleteFile mock is already set by Set")
 	}
@@ -209,8 +220,8 @@ func (mmDeleteFile *mMinioIMockDeleteFile) ExpectLoggerParam2(logger *zap.Logger
 	if mmDeleteFile.defaultExpectation.paramPtrs == nil {
 		mmDeleteFile.defaultExpectation.paramPtrs = &MinioIMockDeleteFileParamPtrs{}
 	}
-	mmDeleteFile.defaultExpectation.paramPtrs.logger = &logger
-	mmDeleteFile.defaultExpectation.expectationOrigins.originLogger = minimock.CallerInfo(1)
+	mmDeleteFile.defaultExpectation.paramPtrs.userUID = &userUID
+	mmDeleteFile.defaultExpectation.expectationOrigins.originUserUID = minimock.CallerInfo(1)
 
 	return mmDeleteFile
 }
@@ -239,7 +250,7 @@ func (mmDeleteFile *mMinioIMockDeleteFile) ExpectFilePathParam3(filePath string)
 }
 
 // Inspect accepts an inspector function that has same arguments as the MinioI.DeleteFile
-func (mmDeleteFile *mMinioIMockDeleteFile) Inspect(f func(ctx context.Context, logger *zap.Logger, filePath string)) *mMinioIMockDeleteFile {
+func (mmDeleteFile *mMinioIMockDeleteFile) Inspect(f func(ctx context.Context, userUID uuid.UUID, filePath string)) *mMinioIMockDeleteFile {
 	if mmDeleteFile.mock.inspectFuncDeleteFile != nil {
 		mmDeleteFile.mock.t.Fatalf("Inspect function is already set for MinioIMock.DeleteFile")
 	}
@@ -264,7 +275,7 @@ func (mmDeleteFile *mMinioIMockDeleteFile) Return(err error) *MinioIMock {
 }
 
 // Set uses given function f to mock the MinioI.DeleteFile method
-func (mmDeleteFile *mMinioIMockDeleteFile) Set(f func(ctx context.Context, logger *zap.Logger, filePath string) (err error)) *MinioIMock {
+func (mmDeleteFile *mMinioIMockDeleteFile) Set(f func(ctx context.Context, userUID uuid.UUID, filePath string) (err error)) *MinioIMock {
 	if mmDeleteFile.defaultExpectation != nil {
 		mmDeleteFile.mock.t.Fatalf("Default expectation is already set for the MinioI.DeleteFile method")
 	}
@@ -280,14 +291,14 @@ func (mmDeleteFile *mMinioIMockDeleteFile) Set(f func(ctx context.Context, logge
 
 // When sets expectation for the MinioI.DeleteFile which will trigger the result defined by the following
 // Then helper
-func (mmDeleteFile *mMinioIMockDeleteFile) When(ctx context.Context, logger *zap.Logger, filePath string) *MinioIMockDeleteFileExpectation {
+func (mmDeleteFile *mMinioIMockDeleteFile) When(ctx context.Context, userUID uuid.UUID, filePath string) *MinioIMockDeleteFileExpectation {
 	if mmDeleteFile.mock.funcDeleteFile != nil {
 		mmDeleteFile.mock.t.Fatalf("MinioIMock.DeleteFile mock is already set by Set")
 	}
 
 	expectation := &MinioIMockDeleteFileExpectation{
 		mock:               mmDeleteFile.mock,
-		params:             &MinioIMockDeleteFileParams{ctx, logger, filePath},
+		params:             &MinioIMockDeleteFileParams{ctx, userUID, filePath},
 		expectationOrigins: MinioIMockDeleteFileExpectationOrigins{origin: minimock.CallerInfo(1)},
 	}
 	mmDeleteFile.expectations = append(mmDeleteFile.expectations, expectation)
@@ -322,17 +333,17 @@ func (mmDeleteFile *mMinioIMockDeleteFile) invocationsDone() bool {
 }
 
 // DeleteFile implements mm_minio.MinioI
-func (mmDeleteFile *MinioIMock) DeleteFile(ctx context.Context, logger *zap.Logger, filePath string) (err error) {
+func (mmDeleteFile *MinioIMock) DeleteFile(ctx context.Context, userUID uuid.UUID, filePath string) (err error) {
 	mm_atomic.AddUint64(&mmDeleteFile.beforeDeleteFileCounter, 1)
 	defer mm_atomic.AddUint64(&mmDeleteFile.afterDeleteFileCounter, 1)
 
 	mmDeleteFile.t.Helper()
 
 	if mmDeleteFile.inspectFuncDeleteFile != nil {
-		mmDeleteFile.inspectFuncDeleteFile(ctx, logger, filePath)
+		mmDeleteFile.inspectFuncDeleteFile(ctx, userUID, filePath)
 	}
 
-	mm_params := MinioIMockDeleteFileParams{ctx, logger, filePath}
+	mm_params := MinioIMockDeleteFileParams{ctx, userUID, filePath}
 
 	// Record call args
 	mmDeleteFile.DeleteFileMock.mutex.Lock()
@@ -351,7 +362,7 @@ func (mmDeleteFile *MinioIMock) DeleteFile(ctx context.Context, logger *zap.Logg
 		mm_want := mmDeleteFile.DeleteFileMock.defaultExpectation.params
 		mm_want_ptrs := mmDeleteFile.DeleteFileMock.defaultExpectation.paramPtrs
 
-		mm_got := MinioIMockDeleteFileParams{ctx, logger, filePath}
+		mm_got := MinioIMockDeleteFileParams{ctx, userUID, filePath}
 
 		if mm_want_ptrs != nil {
 
@@ -360,9 +371,9 @@ func (mmDeleteFile *MinioIMock) DeleteFile(ctx context.Context, logger *zap.Logg
 					mmDeleteFile.DeleteFileMock.defaultExpectation.expectationOrigins.originCtx, *mm_want_ptrs.ctx, mm_got.ctx, minimock.Diff(*mm_want_ptrs.ctx, mm_got.ctx))
 			}
 
-			if mm_want_ptrs.logger != nil && !minimock.Equal(*mm_want_ptrs.logger, mm_got.logger) {
-				mmDeleteFile.t.Errorf("MinioIMock.DeleteFile got unexpected parameter logger, expected at\n%s:\nwant: %#v\n got: %#v%s\n",
-					mmDeleteFile.DeleteFileMock.defaultExpectation.expectationOrigins.originLogger, *mm_want_ptrs.logger, mm_got.logger, minimock.Diff(*mm_want_ptrs.logger, mm_got.logger))
+			if mm_want_ptrs.userUID != nil && !minimock.Equal(*mm_want_ptrs.userUID, mm_got.userUID) {
+				mmDeleteFile.t.Errorf("MinioIMock.DeleteFile got unexpected parameter userUID, expected at\n%s:\nwant: %#v\n got: %#v%s\n",
+					mmDeleteFile.DeleteFileMock.defaultExpectation.expectationOrigins.originUserUID, *mm_want_ptrs.userUID, mm_got.userUID, minimock.Diff(*mm_want_ptrs.userUID, mm_got.userUID))
 			}
 
 			if mm_want_ptrs.filePath != nil && !minimock.Equal(*mm_want_ptrs.filePath, mm_got.filePath) {
@@ -382,9 +393,9 @@ func (mmDeleteFile *MinioIMock) DeleteFile(ctx context.Context, logger *zap.Logg
 		return (*mm_results).err
 	}
 	if mmDeleteFile.funcDeleteFile != nil {
-		return mmDeleteFile.funcDeleteFile(ctx, logger, filePath)
+		return mmDeleteFile.funcDeleteFile(ctx, userUID, filePath)
 	}
-	mmDeleteFile.t.Fatalf("Unexpected call to MinioIMock.DeleteFile. %v %v %v", ctx, logger, filePath)
+	mmDeleteFile.t.Fatalf("Unexpected call to MinioIMock.DeleteFile. %v %v %v", ctx, userUID, filePath)
 	return
 }
 
@@ -483,14 +494,14 @@ type MinioIMockGetFileExpectation struct {
 // MinioIMockGetFileParams contains parameters of the MinioI.GetFile
 type MinioIMockGetFileParams struct {
 	ctx      context.Context
-	logger   *zap.Logger
+	userUID  uuid.UUID
 	filePath string
 }
 
 // MinioIMockGetFileParamPtrs contains pointers to parameters of the MinioI.GetFile
 type MinioIMockGetFileParamPtrs struct {
 	ctx      *context.Context
-	logger   **zap.Logger
+	userUID  *uuid.UUID
 	filePath *string
 }
 
@@ -504,7 +515,7 @@ type MinioIMockGetFileResults struct {
 type MinioIMockGetFileExpectationOrigins struct {
 	origin         string
 	originCtx      string
-	originLogger   string
+	originUserUID  string
 	originFilePath string
 }
 
@@ -519,7 +530,7 @@ func (mmGetFile *mMinioIMockGetFile) Optional() *mMinioIMockGetFile {
 }
 
 // Expect sets up expected params for MinioI.GetFile
-func (mmGetFile *mMinioIMockGetFile) Expect(ctx context.Context, logger *zap.Logger, filePath string) *mMinioIMockGetFile {
+func (mmGetFile *mMinioIMockGetFile) Expect(ctx context.Context, userUID uuid.UUID, filePath string) *mMinioIMockGetFile {
 	if mmGetFile.mock.funcGetFile != nil {
 		mmGetFile.mock.t.Fatalf("MinioIMock.GetFile mock is already set by Set")
 	}
@@ -532,7 +543,7 @@ func (mmGetFile *mMinioIMockGetFile) Expect(ctx context.Context, logger *zap.Log
 		mmGetFile.mock.t.Fatalf("MinioIMock.GetFile mock is already set by ExpectParams functions")
 	}
 
-	mmGetFile.defaultExpectation.params = &MinioIMockGetFileParams{ctx, logger, filePath}
+	mmGetFile.defaultExpectation.params = &MinioIMockGetFileParams{ctx, userUID, filePath}
 	mmGetFile.defaultExpectation.expectationOrigins.origin = minimock.CallerInfo(1)
 	for _, e := range mmGetFile.expectations {
 		if minimock.Equal(e.params, mmGetFile.defaultExpectation.params) {
@@ -566,8 +577,8 @@ func (mmGetFile *mMinioIMockGetFile) ExpectCtxParam1(ctx context.Context) *mMini
 	return mmGetFile
 }
 
-// ExpectLoggerParam2 sets up expected param logger for MinioI.GetFile
-func (mmGetFile *mMinioIMockGetFile) ExpectLoggerParam2(logger *zap.Logger) *mMinioIMockGetFile {
+// ExpectUserUIDParam2 sets up expected param userUID for MinioI.GetFile
+func (mmGetFile *mMinioIMockGetFile) ExpectUserUIDParam2(userUID uuid.UUID) *mMinioIMockGetFile {
 	if mmGetFile.mock.funcGetFile != nil {
 		mmGetFile.mock.t.Fatalf("MinioIMock.GetFile mock is already set by Set")
 	}
@@ -583,8 +594,8 @@ func (mmGetFile *mMinioIMockGetFile) ExpectLoggerParam2(logger *zap.Logger) *mMi
 	if mmGetFile.defaultExpectation.paramPtrs == nil {
 		mmGetFile.defaultExpectation.paramPtrs = &MinioIMockGetFileParamPtrs{}
 	}
-	mmGetFile.defaultExpectation.paramPtrs.logger = &logger
-	mmGetFile.defaultExpectation.expectationOrigins.originLogger = minimock.CallerInfo(1)
+	mmGetFile.defaultExpectation.paramPtrs.userUID = &userUID
+	mmGetFile.defaultExpectation.expectationOrigins.originUserUID = minimock.CallerInfo(1)
 
 	return mmGetFile
 }
@@ -613,7 +624,7 @@ func (mmGetFile *mMinioIMockGetFile) ExpectFilePathParam3(filePath string) *mMin
 }
 
 // Inspect accepts an inspector function that has same arguments as the MinioI.GetFile
-func (mmGetFile *mMinioIMockGetFile) Inspect(f func(ctx context.Context, logger *zap.Logger, filePath string)) *mMinioIMockGetFile {
+func (mmGetFile *mMinioIMockGetFile) Inspect(f func(ctx context.Context, userUID uuid.UUID, filePath string)) *mMinioIMockGetFile {
 	if mmGetFile.mock.inspectFuncGetFile != nil {
 		mmGetFile.mock.t.Fatalf("Inspect function is already set for MinioIMock.GetFile")
 	}
@@ -638,7 +649,7 @@ func (mmGetFile *mMinioIMockGetFile) Return(ba1 []byte, err error) *MinioIMock {
 }
 
 // Set uses given function f to mock the MinioI.GetFile method
-func (mmGetFile *mMinioIMockGetFile) Set(f func(ctx context.Context, logger *zap.Logger, filePath string) (ba1 []byte, err error)) *MinioIMock {
+func (mmGetFile *mMinioIMockGetFile) Set(f func(ctx context.Context, userUID uuid.UUID, filePath string) (ba1 []byte, err error)) *MinioIMock {
 	if mmGetFile.defaultExpectation != nil {
 		mmGetFile.mock.t.Fatalf("Default expectation is already set for the MinioI.GetFile method")
 	}
@@ -654,14 +665,14 @@ func (mmGetFile *mMinioIMockGetFile) Set(f func(ctx context.Context, logger *zap
 
 // When sets expectation for the MinioI.GetFile which will trigger the result defined by the following
 // Then helper
-func (mmGetFile *mMinioIMockGetFile) When(ctx context.Context, logger *zap.Logger, filePath string) *MinioIMockGetFileExpectation {
+func (mmGetFile *mMinioIMockGetFile) When(ctx context.Context, userUID uuid.UUID, filePath string) *MinioIMockGetFileExpectation {
 	if mmGetFile.mock.funcGetFile != nil {
 		mmGetFile.mock.t.Fatalf("MinioIMock.GetFile mock is already set by Set")
 	}
 
 	expectation := &MinioIMockGetFileExpectation{
 		mock:               mmGetFile.mock,
-		params:             &MinioIMockGetFileParams{ctx, logger, filePath},
+		params:             &MinioIMockGetFileParams{ctx, userUID, filePath},
 		expectationOrigins: MinioIMockGetFileExpectationOrigins{origin: minimock.CallerInfo(1)},
 	}
 	mmGetFile.expectations = append(mmGetFile.expectations, expectation)
@@ -696,17 +707,17 @@ func (mmGetFile *mMinioIMockGetFile) invocationsDone() bool {
 }
 
 // GetFile implements mm_minio.MinioI
-func (mmGetFile *MinioIMock) GetFile(ctx context.Context, logger *zap.Logger, filePath string) (ba1 []byte, err error) {
+func (mmGetFile *MinioIMock) GetFile(ctx context.Context, userUID uuid.UUID, filePath string) (ba1 []byte, err error) {
 	mm_atomic.AddUint64(&mmGetFile.beforeGetFileCounter, 1)
 	defer mm_atomic.AddUint64(&mmGetFile.afterGetFileCounter, 1)
 
 	mmGetFile.t.Helper()
 
 	if mmGetFile.inspectFuncGetFile != nil {
-		mmGetFile.inspectFuncGetFile(ctx, logger, filePath)
+		mmGetFile.inspectFuncGetFile(ctx, userUID, filePath)
 	}
 
-	mm_params := MinioIMockGetFileParams{ctx, logger, filePath}
+	mm_params := MinioIMockGetFileParams{ctx, userUID, filePath}
 
 	// Record call args
 	mmGetFile.GetFileMock.mutex.Lock()
@@ -725,7 +736,7 @@ func (mmGetFile *MinioIMock) GetFile(ctx context.Context, logger *zap.Logger, fi
 		mm_want := mmGetFile.GetFileMock.defaultExpectation.params
 		mm_want_ptrs := mmGetFile.GetFileMock.defaultExpectation.paramPtrs
 
-		mm_got := MinioIMockGetFileParams{ctx, logger, filePath}
+		mm_got := MinioIMockGetFileParams{ctx, userUID, filePath}
 
 		if mm_want_ptrs != nil {
 
@@ -734,9 +745,9 @@ func (mmGetFile *MinioIMock) GetFile(ctx context.Context, logger *zap.Logger, fi
 					mmGetFile.GetFileMock.defaultExpectation.expectationOrigins.originCtx, *mm_want_ptrs.ctx, mm_got.ctx, minimock.Diff(*mm_want_ptrs.ctx, mm_got.ctx))
 			}
 
-			if mm_want_ptrs.logger != nil && !minimock.Equal(*mm_want_ptrs.logger, mm_got.logger) {
-				mmGetFile.t.Errorf("MinioIMock.GetFile got unexpected parameter logger, expected at\n%s:\nwant: %#v\n got: %#v%s\n",
-					mmGetFile.GetFileMock.defaultExpectation.expectationOrigins.originLogger, *mm_want_ptrs.logger, mm_got.logger, minimock.Diff(*mm_want_ptrs.logger, mm_got.logger))
+			if mm_want_ptrs.userUID != nil && !minimock.Equal(*mm_want_ptrs.userUID, mm_got.userUID) {
+				mmGetFile.t.Errorf("MinioIMock.GetFile got unexpected parameter userUID, expected at\n%s:\nwant: %#v\n got: %#v%s\n",
+					mmGetFile.GetFileMock.defaultExpectation.expectationOrigins.originUserUID, *mm_want_ptrs.userUID, mm_got.userUID, minimock.Diff(*mm_want_ptrs.userUID, mm_got.userUID))
 			}
 
 			if mm_want_ptrs.filePath != nil && !minimock.Equal(*mm_want_ptrs.filePath, mm_got.filePath) {
@@ -756,9 +767,9 @@ func (mmGetFile *MinioIMock) GetFile(ctx context.Context, logger *zap.Logger, fi
 		return (*mm_results).ba1, (*mm_results).err
 	}
 	if mmGetFile.funcGetFile != nil {
-		return mmGetFile.funcGetFile(ctx, logger, filePath)
+		return mmGetFile.funcGetFile(ctx, userUID, filePath)
 	}
-	mmGetFile.t.Fatalf("Unexpected call to MinioIMock.GetFile. %v %v %v", ctx, logger, filePath)
+	mmGetFile.t.Fatalf("Unexpected call to MinioIMock.GetFile. %v %v %v", ctx, userUID, filePath)
 	return
 }
 
@@ -857,14 +868,14 @@ type MinioIMockGetFilesByPathsExpectation struct {
 // MinioIMockGetFilesByPathsParams contains parameters of the MinioI.GetFilesByPaths
 type MinioIMockGetFilesByPathsParams struct {
 	ctx       context.Context
-	logger    *zap.Logger
+	userUID   uuid.UUID
 	filePaths []string
 }
 
 // MinioIMockGetFilesByPathsParamPtrs contains pointers to parameters of the MinioI.GetFilesByPaths
 type MinioIMockGetFilesByPathsParamPtrs struct {
 	ctx       *context.Context
-	logger    **zap.Logger
+	userUID   *uuid.UUID
 	filePaths *[]string
 }
 
@@ -878,7 +889,7 @@ type MinioIMockGetFilesByPathsResults struct {
 type MinioIMockGetFilesByPathsExpectationOrigins struct {
 	origin          string
 	originCtx       string
-	originLogger    string
+	originUserUID   string
 	originFilePaths string
 }
 
@@ -893,7 +904,7 @@ func (mmGetFilesByPaths *mMinioIMockGetFilesByPaths) Optional() *mMinioIMockGetF
 }
 
 // Expect sets up expected params for MinioI.GetFilesByPaths
-func (mmGetFilesByPaths *mMinioIMockGetFilesByPaths) Expect(ctx context.Context, logger *zap.Logger, filePaths []string) *mMinioIMockGetFilesByPaths {
+func (mmGetFilesByPaths *mMinioIMockGetFilesByPaths) Expect(ctx context.Context, userUID uuid.UUID, filePaths []string) *mMinioIMockGetFilesByPaths {
 	if mmGetFilesByPaths.mock.funcGetFilesByPaths != nil {
 		mmGetFilesByPaths.mock.t.Fatalf("MinioIMock.GetFilesByPaths mock is already set by Set")
 	}
@@ -906,7 +917,7 @@ func (mmGetFilesByPaths *mMinioIMockGetFilesByPaths) Expect(ctx context.Context,
 		mmGetFilesByPaths.mock.t.Fatalf("MinioIMock.GetFilesByPaths mock is already set by ExpectParams functions")
 	}
 
-	mmGetFilesByPaths.defaultExpectation.params = &MinioIMockGetFilesByPathsParams{ctx, logger, filePaths}
+	mmGetFilesByPaths.defaultExpectation.params = &MinioIMockGetFilesByPathsParams{ctx, userUID, filePaths}
 	mmGetFilesByPaths.defaultExpectation.expectationOrigins.origin = minimock.CallerInfo(1)
 	for _, e := range mmGetFilesByPaths.expectations {
 		if minimock.Equal(e.params, mmGetFilesByPaths.defaultExpectation.params) {
@@ -940,8 +951,8 @@ func (mmGetFilesByPaths *mMinioIMockGetFilesByPaths) ExpectCtxParam1(ctx context
 	return mmGetFilesByPaths
 }
 
-// ExpectLoggerParam2 sets up expected param logger for MinioI.GetFilesByPaths
-func (mmGetFilesByPaths *mMinioIMockGetFilesByPaths) ExpectLoggerParam2(logger *zap.Logger) *mMinioIMockGetFilesByPaths {
+// ExpectUserUIDParam2 sets up expected param userUID for MinioI.GetFilesByPaths
+func (mmGetFilesByPaths *mMinioIMockGetFilesByPaths) ExpectUserUIDParam2(userUID uuid.UUID) *mMinioIMockGetFilesByPaths {
 	if mmGetFilesByPaths.mock.funcGetFilesByPaths != nil {
 		mmGetFilesByPaths.mock.t.Fatalf("MinioIMock.GetFilesByPaths mock is already set by Set")
 	}
@@ -957,8 +968,8 @@ func (mmGetFilesByPaths *mMinioIMockGetFilesByPaths) ExpectLoggerParam2(logger *
 	if mmGetFilesByPaths.defaultExpectation.paramPtrs == nil {
 		mmGetFilesByPaths.defaultExpectation.paramPtrs = &MinioIMockGetFilesByPathsParamPtrs{}
 	}
-	mmGetFilesByPaths.defaultExpectation.paramPtrs.logger = &logger
-	mmGetFilesByPaths.defaultExpectation.expectationOrigins.originLogger = minimock.CallerInfo(1)
+	mmGetFilesByPaths.defaultExpectation.paramPtrs.userUID = &userUID
+	mmGetFilesByPaths.defaultExpectation.expectationOrigins.originUserUID = minimock.CallerInfo(1)
 
 	return mmGetFilesByPaths
 }
@@ -987,7 +998,7 @@ func (mmGetFilesByPaths *mMinioIMockGetFilesByPaths) ExpectFilePathsParam3(fileP
 }
 
 // Inspect accepts an inspector function that has same arguments as the MinioI.GetFilesByPaths
-func (mmGetFilesByPaths *mMinioIMockGetFilesByPaths) Inspect(f func(ctx context.Context, logger *zap.Logger, filePaths []string)) *mMinioIMockGetFilesByPaths {
+func (mmGetFilesByPaths *mMinioIMockGetFilesByPaths) Inspect(f func(ctx context.Context, userUID uuid.UUID, filePaths []string)) *mMinioIMockGetFilesByPaths {
 	if mmGetFilesByPaths.mock.inspectFuncGetFilesByPaths != nil {
 		mmGetFilesByPaths.mock.t.Fatalf("Inspect function is already set for MinioIMock.GetFilesByPaths")
 	}
@@ -1012,7 +1023,7 @@ func (mmGetFilesByPaths *mMinioIMockGetFilesByPaths) Return(fa1 []mm_minio.FileC
 }
 
 // Set uses given function f to mock the MinioI.GetFilesByPaths method
-func (mmGetFilesByPaths *mMinioIMockGetFilesByPaths) Set(f func(ctx context.Context, logger *zap.Logger, filePaths []string) (fa1 []mm_minio.FileContent, err error)) *MinioIMock {
+func (mmGetFilesByPaths *mMinioIMockGetFilesByPaths) Set(f func(ctx context.Context, userUID uuid.UUID, filePaths []string) (fa1 []mm_minio.FileContent, err error)) *MinioIMock {
 	if mmGetFilesByPaths.defaultExpectation != nil {
 		mmGetFilesByPaths.mock.t.Fatalf("Default expectation is already set for the MinioI.GetFilesByPaths method")
 	}
@@ -1028,14 +1039,14 @@ func (mmGetFilesByPaths *mMinioIMockGetFilesByPaths) Set(f func(ctx context.Cont
 
 // When sets expectation for the MinioI.GetFilesByPaths which will trigger the result defined by the following
 // Then helper
-func (mmGetFilesByPaths *mMinioIMockGetFilesByPaths) When(ctx context.Context, logger *zap.Logger, filePaths []string) *MinioIMockGetFilesByPathsExpectation {
+func (mmGetFilesByPaths *mMinioIMockGetFilesByPaths) When(ctx context.Context, userUID uuid.UUID, filePaths []string) *MinioIMockGetFilesByPathsExpectation {
 	if mmGetFilesByPaths.mock.funcGetFilesByPaths != nil {
 		mmGetFilesByPaths.mock.t.Fatalf("MinioIMock.GetFilesByPaths mock is already set by Set")
 	}
 
 	expectation := &MinioIMockGetFilesByPathsExpectation{
 		mock:               mmGetFilesByPaths.mock,
-		params:             &MinioIMockGetFilesByPathsParams{ctx, logger, filePaths},
+		params:             &MinioIMockGetFilesByPathsParams{ctx, userUID, filePaths},
 		expectationOrigins: MinioIMockGetFilesByPathsExpectationOrigins{origin: minimock.CallerInfo(1)},
 	}
 	mmGetFilesByPaths.expectations = append(mmGetFilesByPaths.expectations, expectation)
@@ -1070,17 +1081,17 @@ func (mmGetFilesByPaths *mMinioIMockGetFilesByPaths) invocationsDone() bool {
 }
 
 // GetFilesByPaths implements mm_minio.MinioI
-func (mmGetFilesByPaths *MinioIMock) GetFilesByPaths(ctx context.Context, logger *zap.Logger, filePaths []string) (fa1 []mm_minio.FileContent, err error) {
+func (mmGetFilesByPaths *MinioIMock) GetFilesByPaths(ctx context.Context, userUID uuid.UUID, filePaths []string) (fa1 []mm_minio.FileContent, err error) {
 	mm_atomic.AddUint64(&mmGetFilesByPaths.beforeGetFilesByPathsCounter, 1)
 	defer mm_atomic.AddUint64(&mmGetFilesByPaths.afterGetFilesByPathsCounter, 1)
 
 	mmGetFilesByPaths.t.Helper()
 
 	if mmGetFilesByPaths.inspectFuncGetFilesByPaths != nil {
-		mmGetFilesByPaths.inspectFuncGetFilesByPaths(ctx, logger, filePaths)
+		mmGetFilesByPaths.inspectFuncGetFilesByPaths(ctx, userUID, filePaths)
 	}
 
-	mm_params := MinioIMockGetFilesByPathsParams{ctx, logger, filePaths}
+	mm_params := MinioIMockGetFilesByPathsParams{ctx, userUID, filePaths}
 
 	// Record call args
 	mmGetFilesByPaths.GetFilesByPathsMock.mutex.Lock()
@@ -1099,7 +1110,7 @@ func (mmGetFilesByPaths *MinioIMock) GetFilesByPaths(ctx context.Context, logger
 		mm_want := mmGetFilesByPaths.GetFilesByPathsMock.defaultExpectation.params
 		mm_want_ptrs := mmGetFilesByPaths.GetFilesByPathsMock.defaultExpectation.paramPtrs
 
-		mm_got := MinioIMockGetFilesByPathsParams{ctx, logger, filePaths}
+		mm_got := MinioIMockGetFilesByPathsParams{ctx, userUID, filePaths}
 
 		if mm_want_ptrs != nil {
 
@@ -1108,9 +1119,9 @@ func (mmGetFilesByPaths *MinioIMock) GetFilesByPaths(ctx context.Context, logger
 					mmGetFilesByPaths.GetFilesByPathsMock.defaultExpectation.expectationOrigins.originCtx, *mm_want_ptrs.ctx, mm_got.ctx, minimock.Diff(*mm_want_ptrs.ctx, mm_got.ctx))
 			}
 
-			if mm_want_ptrs.logger != nil && !minimock.Equal(*mm_want_ptrs.logger, mm_got.logger) {
-				mmGetFilesByPaths.t.Errorf("MinioIMock.GetFilesByPaths got unexpected parameter logger, expected at\n%s:\nwant: %#v\n got: %#v%s\n",
-					mmGetFilesByPaths.GetFilesByPathsMock.defaultExpectation.expectationOrigins.originLogger, *mm_want_ptrs.logger, mm_got.logger, minimock.Diff(*mm_want_ptrs.logger, mm_got.logger))
+			if mm_want_ptrs.userUID != nil && !minimock.Equal(*mm_want_ptrs.userUID, mm_got.userUID) {
+				mmGetFilesByPaths.t.Errorf("MinioIMock.GetFilesByPaths got unexpected parameter userUID, expected at\n%s:\nwant: %#v\n got: %#v%s\n",
+					mmGetFilesByPaths.GetFilesByPathsMock.defaultExpectation.expectationOrigins.originUserUID, *mm_want_ptrs.userUID, mm_got.userUID, minimock.Diff(*mm_want_ptrs.userUID, mm_got.userUID))
 			}
 
 			if mm_want_ptrs.filePaths != nil && !minimock.Equal(*mm_want_ptrs.filePaths, mm_got.filePaths) {
@@ -1130,9 +1141,9 @@ func (mmGetFilesByPaths *MinioIMock) GetFilesByPaths(ctx context.Context, logger
 		return (*mm_results).fa1, (*mm_results).err
 	}
 	if mmGetFilesByPaths.funcGetFilesByPaths != nil {
-		return mmGetFilesByPaths.funcGetFilesByPaths(ctx, logger, filePaths)
+		return mmGetFilesByPaths.funcGetFilesByPaths(ctx, userUID, filePaths)
 	}
-	mmGetFilesByPaths.t.Fatalf("Unexpected call to MinioIMock.GetFilesByPaths. %v %v %v", ctx, logger, filePaths)
+	mmGetFilesByPaths.t.Fatalf("Unexpected call to MinioIMock.GetFilesByPaths. %v %v %v", ctx, userUID, filePaths)
 	return
 }
 
@@ -1230,16 +1241,14 @@ type MinioIMockUploadFileExpectation struct {
 
 // MinioIMockUploadFileParams contains parameters of the MinioI.UploadFile
 type MinioIMockUploadFileParams struct {
-	ctx    context.Context
-	logger *zap.Logger
-	param  *mm_minio.UploadFileParam
+	ctx context.Context
+	up1 *mm_minio.UploadFileParam
 }
 
 // MinioIMockUploadFileParamPtrs contains pointers to parameters of the MinioI.UploadFile
 type MinioIMockUploadFileParamPtrs struct {
-	ctx    *context.Context
-	logger **zap.Logger
-	param  **mm_minio.UploadFileParam
+	ctx *context.Context
+	up1 **mm_minio.UploadFileParam
 }
 
 // MinioIMockUploadFileResults contains results of the MinioI.UploadFile
@@ -1251,10 +1260,9 @@ type MinioIMockUploadFileResults struct {
 
 // MinioIMockUploadFileOrigins contains origins of expectations of the MinioI.UploadFile
 type MinioIMockUploadFileExpectationOrigins struct {
-	origin       string
-	originCtx    string
-	originLogger string
-	originParam  string
+	origin    string
+	originCtx string
+	originUp1 string
 }
 
 // Marks this method to be optional. The default behavior of any method with Return() is '1 or more', meaning
@@ -1268,7 +1276,7 @@ func (mmUploadFile *mMinioIMockUploadFile) Optional() *mMinioIMockUploadFile {
 }
 
 // Expect sets up expected params for MinioI.UploadFile
-func (mmUploadFile *mMinioIMockUploadFile) Expect(ctx context.Context, logger *zap.Logger, param *mm_minio.UploadFileParam) *mMinioIMockUploadFile {
+func (mmUploadFile *mMinioIMockUploadFile) Expect(ctx context.Context, up1 *mm_minio.UploadFileParam) *mMinioIMockUploadFile {
 	if mmUploadFile.mock.funcUploadFile != nil {
 		mmUploadFile.mock.t.Fatalf("MinioIMock.UploadFile mock is already set by Set")
 	}
@@ -1281,7 +1289,7 @@ func (mmUploadFile *mMinioIMockUploadFile) Expect(ctx context.Context, logger *z
 		mmUploadFile.mock.t.Fatalf("MinioIMock.UploadFile mock is already set by ExpectParams functions")
 	}
 
-	mmUploadFile.defaultExpectation.params = &MinioIMockUploadFileParams{ctx, logger, param}
+	mmUploadFile.defaultExpectation.params = &MinioIMockUploadFileParams{ctx, up1}
 	mmUploadFile.defaultExpectation.expectationOrigins.origin = minimock.CallerInfo(1)
 	for _, e := range mmUploadFile.expectations {
 		if minimock.Equal(e.params, mmUploadFile.defaultExpectation.params) {
@@ -1315,8 +1323,8 @@ func (mmUploadFile *mMinioIMockUploadFile) ExpectCtxParam1(ctx context.Context) 
 	return mmUploadFile
 }
 
-// ExpectLoggerParam2 sets up expected param logger for MinioI.UploadFile
-func (mmUploadFile *mMinioIMockUploadFile) ExpectLoggerParam2(logger *zap.Logger) *mMinioIMockUploadFile {
+// ExpectUp1Param2 sets up expected param up1 for MinioI.UploadFile
+func (mmUploadFile *mMinioIMockUploadFile) ExpectUp1Param2(up1 *mm_minio.UploadFileParam) *mMinioIMockUploadFile {
 	if mmUploadFile.mock.funcUploadFile != nil {
 		mmUploadFile.mock.t.Fatalf("MinioIMock.UploadFile mock is already set by Set")
 	}
@@ -1332,37 +1340,14 @@ func (mmUploadFile *mMinioIMockUploadFile) ExpectLoggerParam2(logger *zap.Logger
 	if mmUploadFile.defaultExpectation.paramPtrs == nil {
 		mmUploadFile.defaultExpectation.paramPtrs = &MinioIMockUploadFileParamPtrs{}
 	}
-	mmUploadFile.defaultExpectation.paramPtrs.logger = &logger
-	mmUploadFile.defaultExpectation.expectationOrigins.originLogger = minimock.CallerInfo(1)
-
-	return mmUploadFile
-}
-
-// ExpectParamParam3 sets up expected param param for MinioI.UploadFile
-func (mmUploadFile *mMinioIMockUploadFile) ExpectParamParam3(param *mm_minio.UploadFileParam) *mMinioIMockUploadFile {
-	if mmUploadFile.mock.funcUploadFile != nil {
-		mmUploadFile.mock.t.Fatalf("MinioIMock.UploadFile mock is already set by Set")
-	}
-
-	if mmUploadFile.defaultExpectation == nil {
-		mmUploadFile.defaultExpectation = &MinioIMockUploadFileExpectation{}
-	}
-
-	if mmUploadFile.defaultExpectation.params != nil {
-		mmUploadFile.mock.t.Fatalf("MinioIMock.UploadFile mock is already set by Expect")
-	}
-
-	if mmUploadFile.defaultExpectation.paramPtrs == nil {
-		mmUploadFile.defaultExpectation.paramPtrs = &MinioIMockUploadFileParamPtrs{}
-	}
-	mmUploadFile.defaultExpectation.paramPtrs.param = &param
-	mmUploadFile.defaultExpectation.expectationOrigins.originParam = minimock.CallerInfo(1)
+	mmUploadFile.defaultExpectation.paramPtrs.up1 = &up1
+	mmUploadFile.defaultExpectation.expectationOrigins.originUp1 = minimock.CallerInfo(1)
 
 	return mmUploadFile
 }
 
 // Inspect accepts an inspector function that has same arguments as the MinioI.UploadFile
-func (mmUploadFile *mMinioIMockUploadFile) Inspect(f func(ctx context.Context, logger *zap.Logger, param *mm_minio.UploadFileParam)) *mMinioIMockUploadFile {
+func (mmUploadFile *mMinioIMockUploadFile) Inspect(f func(ctx context.Context, up1 *mm_minio.UploadFileParam)) *mMinioIMockUploadFile {
 	if mmUploadFile.mock.inspectFuncUploadFile != nil {
 		mmUploadFile.mock.t.Fatalf("Inspect function is already set for MinioIMock.UploadFile")
 	}
@@ -1387,7 +1372,7 @@ func (mmUploadFile *mMinioIMockUploadFile) Return(url string, objectInfo *miniog
 }
 
 // Set uses given function f to mock the MinioI.UploadFile method
-func (mmUploadFile *mMinioIMockUploadFile) Set(f func(ctx context.Context, logger *zap.Logger, param *mm_minio.UploadFileParam) (url string, objectInfo *miniogo.ObjectInfo, err error)) *MinioIMock {
+func (mmUploadFile *mMinioIMockUploadFile) Set(f func(ctx context.Context, up1 *mm_minio.UploadFileParam) (url string, objectInfo *miniogo.ObjectInfo, err error)) *MinioIMock {
 	if mmUploadFile.defaultExpectation != nil {
 		mmUploadFile.mock.t.Fatalf("Default expectation is already set for the MinioI.UploadFile method")
 	}
@@ -1403,14 +1388,14 @@ func (mmUploadFile *mMinioIMockUploadFile) Set(f func(ctx context.Context, logge
 
 // When sets expectation for the MinioI.UploadFile which will trigger the result defined by the following
 // Then helper
-func (mmUploadFile *mMinioIMockUploadFile) When(ctx context.Context, logger *zap.Logger, param *mm_minio.UploadFileParam) *MinioIMockUploadFileExpectation {
+func (mmUploadFile *mMinioIMockUploadFile) When(ctx context.Context, up1 *mm_minio.UploadFileParam) *MinioIMockUploadFileExpectation {
 	if mmUploadFile.mock.funcUploadFile != nil {
 		mmUploadFile.mock.t.Fatalf("MinioIMock.UploadFile mock is already set by Set")
 	}
 
 	expectation := &MinioIMockUploadFileExpectation{
 		mock:               mmUploadFile.mock,
-		params:             &MinioIMockUploadFileParams{ctx, logger, param},
+		params:             &MinioIMockUploadFileParams{ctx, up1},
 		expectationOrigins: MinioIMockUploadFileExpectationOrigins{origin: minimock.CallerInfo(1)},
 	}
 	mmUploadFile.expectations = append(mmUploadFile.expectations, expectation)
@@ -1445,17 +1430,17 @@ func (mmUploadFile *mMinioIMockUploadFile) invocationsDone() bool {
 }
 
 // UploadFile implements mm_minio.MinioI
-func (mmUploadFile *MinioIMock) UploadFile(ctx context.Context, logger *zap.Logger, param *mm_minio.UploadFileParam) (url string, objectInfo *miniogo.ObjectInfo, err error) {
+func (mmUploadFile *MinioIMock) UploadFile(ctx context.Context, up1 *mm_minio.UploadFileParam) (url string, objectInfo *miniogo.ObjectInfo, err error) {
 	mm_atomic.AddUint64(&mmUploadFile.beforeUploadFileCounter, 1)
 	defer mm_atomic.AddUint64(&mmUploadFile.afterUploadFileCounter, 1)
 
 	mmUploadFile.t.Helper()
 
 	if mmUploadFile.inspectFuncUploadFile != nil {
-		mmUploadFile.inspectFuncUploadFile(ctx, logger, param)
+		mmUploadFile.inspectFuncUploadFile(ctx, up1)
 	}
 
-	mm_params := MinioIMockUploadFileParams{ctx, logger, param}
+	mm_params := MinioIMockUploadFileParams{ctx, up1}
 
 	// Record call args
 	mmUploadFile.UploadFileMock.mutex.Lock()
@@ -1474,7 +1459,7 @@ func (mmUploadFile *MinioIMock) UploadFile(ctx context.Context, logger *zap.Logg
 		mm_want := mmUploadFile.UploadFileMock.defaultExpectation.params
 		mm_want_ptrs := mmUploadFile.UploadFileMock.defaultExpectation.paramPtrs
 
-		mm_got := MinioIMockUploadFileParams{ctx, logger, param}
+		mm_got := MinioIMockUploadFileParams{ctx, up1}
 
 		if mm_want_ptrs != nil {
 
@@ -1483,14 +1468,9 @@ func (mmUploadFile *MinioIMock) UploadFile(ctx context.Context, logger *zap.Logg
 					mmUploadFile.UploadFileMock.defaultExpectation.expectationOrigins.originCtx, *mm_want_ptrs.ctx, mm_got.ctx, minimock.Diff(*mm_want_ptrs.ctx, mm_got.ctx))
 			}
 
-			if mm_want_ptrs.logger != nil && !minimock.Equal(*mm_want_ptrs.logger, mm_got.logger) {
-				mmUploadFile.t.Errorf("MinioIMock.UploadFile got unexpected parameter logger, expected at\n%s:\nwant: %#v\n got: %#v%s\n",
-					mmUploadFile.UploadFileMock.defaultExpectation.expectationOrigins.originLogger, *mm_want_ptrs.logger, mm_got.logger, minimock.Diff(*mm_want_ptrs.logger, mm_got.logger))
-			}
-
-			if mm_want_ptrs.param != nil && !minimock.Equal(*mm_want_ptrs.param, mm_got.param) {
-				mmUploadFile.t.Errorf("MinioIMock.UploadFile got unexpected parameter param, expected at\n%s:\nwant: %#v\n got: %#v%s\n",
-					mmUploadFile.UploadFileMock.defaultExpectation.expectationOrigins.originParam, *mm_want_ptrs.param, mm_got.param, minimock.Diff(*mm_want_ptrs.param, mm_got.param))
+			if mm_want_ptrs.up1 != nil && !minimock.Equal(*mm_want_ptrs.up1, mm_got.up1) {
+				mmUploadFile.t.Errorf("MinioIMock.UploadFile got unexpected parameter up1, expected at\n%s:\nwant: %#v\n got: %#v%s\n",
+					mmUploadFile.UploadFileMock.defaultExpectation.expectationOrigins.originUp1, *mm_want_ptrs.up1, mm_got.up1, minimock.Diff(*mm_want_ptrs.up1, mm_got.up1))
 			}
 
 		} else if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
@@ -1505,9 +1485,9 @@ func (mmUploadFile *MinioIMock) UploadFile(ctx context.Context, logger *zap.Logg
 		return (*mm_results).url, (*mm_results).objectInfo, (*mm_results).err
 	}
 	if mmUploadFile.funcUploadFile != nil {
-		return mmUploadFile.funcUploadFile(ctx, logger, param)
+		return mmUploadFile.funcUploadFile(ctx, up1)
 	}
-	mmUploadFile.t.Fatalf("Unexpected call to MinioIMock.UploadFile. %v %v %v", ctx, logger, param)
+	mmUploadFile.t.Fatalf("Unexpected call to MinioIMock.UploadFile. %v %v", ctx, up1)
 	return
 }
 
@@ -1605,16 +1585,14 @@ type MinioIMockUploadFileBytesExpectation struct {
 
 // MinioIMockUploadFileBytesParams contains parameters of the MinioI.UploadFileBytes
 type MinioIMockUploadFileBytesParams struct {
-	ctx    context.Context
-	logger *zap.Logger
-	param  *mm_minio.UploadFileBytesParam
+	ctx context.Context
+	up1 *mm_minio.UploadFileBytesParam
 }
 
 // MinioIMockUploadFileBytesParamPtrs contains pointers to parameters of the MinioI.UploadFileBytes
 type MinioIMockUploadFileBytesParamPtrs struct {
-	ctx    *context.Context
-	logger **zap.Logger
-	param  **mm_minio.UploadFileBytesParam
+	ctx *context.Context
+	up1 **mm_minio.UploadFileBytesParam
 }
 
 // MinioIMockUploadFileBytesResults contains results of the MinioI.UploadFileBytes
@@ -1626,10 +1604,9 @@ type MinioIMockUploadFileBytesResults struct {
 
 // MinioIMockUploadFileBytesOrigins contains origins of expectations of the MinioI.UploadFileBytes
 type MinioIMockUploadFileBytesExpectationOrigins struct {
-	origin       string
-	originCtx    string
-	originLogger string
-	originParam  string
+	origin    string
+	originCtx string
+	originUp1 string
 }
 
 // Marks this method to be optional. The default behavior of any method with Return() is '1 or more', meaning
@@ -1643,7 +1620,7 @@ func (mmUploadFileBytes *mMinioIMockUploadFileBytes) Optional() *mMinioIMockUplo
 }
 
 // Expect sets up expected params for MinioI.UploadFileBytes
-func (mmUploadFileBytes *mMinioIMockUploadFileBytes) Expect(ctx context.Context, logger *zap.Logger, param *mm_minio.UploadFileBytesParam) *mMinioIMockUploadFileBytes {
+func (mmUploadFileBytes *mMinioIMockUploadFileBytes) Expect(ctx context.Context, up1 *mm_minio.UploadFileBytesParam) *mMinioIMockUploadFileBytes {
 	if mmUploadFileBytes.mock.funcUploadFileBytes != nil {
 		mmUploadFileBytes.mock.t.Fatalf("MinioIMock.UploadFileBytes mock is already set by Set")
 	}
@@ -1656,7 +1633,7 @@ func (mmUploadFileBytes *mMinioIMockUploadFileBytes) Expect(ctx context.Context,
 		mmUploadFileBytes.mock.t.Fatalf("MinioIMock.UploadFileBytes mock is already set by ExpectParams functions")
 	}
 
-	mmUploadFileBytes.defaultExpectation.params = &MinioIMockUploadFileBytesParams{ctx, logger, param}
+	mmUploadFileBytes.defaultExpectation.params = &MinioIMockUploadFileBytesParams{ctx, up1}
 	mmUploadFileBytes.defaultExpectation.expectationOrigins.origin = minimock.CallerInfo(1)
 	for _, e := range mmUploadFileBytes.expectations {
 		if minimock.Equal(e.params, mmUploadFileBytes.defaultExpectation.params) {
@@ -1690,8 +1667,8 @@ func (mmUploadFileBytes *mMinioIMockUploadFileBytes) ExpectCtxParam1(ctx context
 	return mmUploadFileBytes
 }
 
-// ExpectLoggerParam2 sets up expected param logger for MinioI.UploadFileBytes
-func (mmUploadFileBytes *mMinioIMockUploadFileBytes) ExpectLoggerParam2(logger *zap.Logger) *mMinioIMockUploadFileBytes {
+// ExpectUp1Param2 sets up expected param up1 for MinioI.UploadFileBytes
+func (mmUploadFileBytes *mMinioIMockUploadFileBytes) ExpectUp1Param2(up1 *mm_minio.UploadFileBytesParam) *mMinioIMockUploadFileBytes {
 	if mmUploadFileBytes.mock.funcUploadFileBytes != nil {
 		mmUploadFileBytes.mock.t.Fatalf("MinioIMock.UploadFileBytes mock is already set by Set")
 	}
@@ -1707,37 +1684,14 @@ func (mmUploadFileBytes *mMinioIMockUploadFileBytes) ExpectLoggerParam2(logger *
 	if mmUploadFileBytes.defaultExpectation.paramPtrs == nil {
 		mmUploadFileBytes.defaultExpectation.paramPtrs = &MinioIMockUploadFileBytesParamPtrs{}
 	}
-	mmUploadFileBytes.defaultExpectation.paramPtrs.logger = &logger
-	mmUploadFileBytes.defaultExpectation.expectationOrigins.originLogger = minimock.CallerInfo(1)
-
-	return mmUploadFileBytes
-}
-
-// ExpectParamParam3 sets up expected param param for MinioI.UploadFileBytes
-func (mmUploadFileBytes *mMinioIMockUploadFileBytes) ExpectParamParam3(param *mm_minio.UploadFileBytesParam) *mMinioIMockUploadFileBytes {
-	if mmUploadFileBytes.mock.funcUploadFileBytes != nil {
-		mmUploadFileBytes.mock.t.Fatalf("MinioIMock.UploadFileBytes mock is already set by Set")
-	}
-
-	if mmUploadFileBytes.defaultExpectation == nil {
-		mmUploadFileBytes.defaultExpectation = &MinioIMockUploadFileBytesExpectation{}
-	}
-
-	if mmUploadFileBytes.defaultExpectation.params != nil {
-		mmUploadFileBytes.mock.t.Fatalf("MinioIMock.UploadFileBytes mock is already set by Expect")
-	}
-
-	if mmUploadFileBytes.defaultExpectation.paramPtrs == nil {
-		mmUploadFileBytes.defaultExpectation.paramPtrs = &MinioIMockUploadFileBytesParamPtrs{}
-	}
-	mmUploadFileBytes.defaultExpectation.paramPtrs.param = &param
-	mmUploadFileBytes.defaultExpectation.expectationOrigins.originParam = minimock.CallerInfo(1)
+	mmUploadFileBytes.defaultExpectation.paramPtrs.up1 = &up1
+	mmUploadFileBytes.defaultExpectation.expectationOrigins.originUp1 = minimock.CallerInfo(1)
 
 	return mmUploadFileBytes
 }
 
 // Inspect accepts an inspector function that has same arguments as the MinioI.UploadFileBytes
-func (mmUploadFileBytes *mMinioIMockUploadFileBytes) Inspect(f func(ctx context.Context, logger *zap.Logger, param *mm_minio.UploadFileBytesParam)) *mMinioIMockUploadFileBytes {
+func (mmUploadFileBytes *mMinioIMockUploadFileBytes) Inspect(f func(ctx context.Context, up1 *mm_minio.UploadFileBytesParam)) *mMinioIMockUploadFileBytes {
 	if mmUploadFileBytes.mock.inspectFuncUploadFileBytes != nil {
 		mmUploadFileBytes.mock.t.Fatalf("Inspect function is already set for MinioIMock.UploadFileBytes")
 	}
@@ -1762,7 +1716,7 @@ func (mmUploadFileBytes *mMinioIMockUploadFileBytes) Return(url string, objectIn
 }
 
 // Set uses given function f to mock the MinioI.UploadFileBytes method
-func (mmUploadFileBytes *mMinioIMockUploadFileBytes) Set(f func(ctx context.Context, logger *zap.Logger, param *mm_minio.UploadFileBytesParam) (url string, objectInfo *miniogo.ObjectInfo, err error)) *MinioIMock {
+func (mmUploadFileBytes *mMinioIMockUploadFileBytes) Set(f func(ctx context.Context, up1 *mm_minio.UploadFileBytesParam) (url string, objectInfo *miniogo.ObjectInfo, err error)) *MinioIMock {
 	if mmUploadFileBytes.defaultExpectation != nil {
 		mmUploadFileBytes.mock.t.Fatalf("Default expectation is already set for the MinioI.UploadFileBytes method")
 	}
@@ -1778,14 +1732,14 @@ func (mmUploadFileBytes *mMinioIMockUploadFileBytes) Set(f func(ctx context.Cont
 
 // When sets expectation for the MinioI.UploadFileBytes which will trigger the result defined by the following
 // Then helper
-func (mmUploadFileBytes *mMinioIMockUploadFileBytes) When(ctx context.Context, logger *zap.Logger, param *mm_minio.UploadFileBytesParam) *MinioIMockUploadFileBytesExpectation {
+func (mmUploadFileBytes *mMinioIMockUploadFileBytes) When(ctx context.Context, up1 *mm_minio.UploadFileBytesParam) *MinioIMockUploadFileBytesExpectation {
 	if mmUploadFileBytes.mock.funcUploadFileBytes != nil {
 		mmUploadFileBytes.mock.t.Fatalf("MinioIMock.UploadFileBytes mock is already set by Set")
 	}
 
 	expectation := &MinioIMockUploadFileBytesExpectation{
 		mock:               mmUploadFileBytes.mock,
-		params:             &MinioIMockUploadFileBytesParams{ctx, logger, param},
+		params:             &MinioIMockUploadFileBytesParams{ctx, up1},
 		expectationOrigins: MinioIMockUploadFileBytesExpectationOrigins{origin: minimock.CallerInfo(1)},
 	}
 	mmUploadFileBytes.expectations = append(mmUploadFileBytes.expectations, expectation)
@@ -1820,17 +1774,17 @@ func (mmUploadFileBytes *mMinioIMockUploadFileBytes) invocationsDone() bool {
 }
 
 // UploadFileBytes implements mm_minio.MinioI
-func (mmUploadFileBytes *MinioIMock) UploadFileBytes(ctx context.Context, logger *zap.Logger, param *mm_minio.UploadFileBytesParam) (url string, objectInfo *miniogo.ObjectInfo, err error) {
+func (mmUploadFileBytes *MinioIMock) UploadFileBytes(ctx context.Context, up1 *mm_minio.UploadFileBytesParam) (url string, objectInfo *miniogo.ObjectInfo, err error) {
 	mm_atomic.AddUint64(&mmUploadFileBytes.beforeUploadFileBytesCounter, 1)
 	defer mm_atomic.AddUint64(&mmUploadFileBytes.afterUploadFileBytesCounter, 1)
 
 	mmUploadFileBytes.t.Helper()
 
 	if mmUploadFileBytes.inspectFuncUploadFileBytes != nil {
-		mmUploadFileBytes.inspectFuncUploadFileBytes(ctx, logger, param)
+		mmUploadFileBytes.inspectFuncUploadFileBytes(ctx, up1)
 	}
 
-	mm_params := MinioIMockUploadFileBytesParams{ctx, logger, param}
+	mm_params := MinioIMockUploadFileBytesParams{ctx, up1}
 
 	// Record call args
 	mmUploadFileBytes.UploadFileBytesMock.mutex.Lock()
@@ -1849,7 +1803,7 @@ func (mmUploadFileBytes *MinioIMock) UploadFileBytes(ctx context.Context, logger
 		mm_want := mmUploadFileBytes.UploadFileBytesMock.defaultExpectation.params
 		mm_want_ptrs := mmUploadFileBytes.UploadFileBytesMock.defaultExpectation.paramPtrs
 
-		mm_got := MinioIMockUploadFileBytesParams{ctx, logger, param}
+		mm_got := MinioIMockUploadFileBytesParams{ctx, up1}
 
 		if mm_want_ptrs != nil {
 
@@ -1858,14 +1812,9 @@ func (mmUploadFileBytes *MinioIMock) UploadFileBytes(ctx context.Context, logger
 					mmUploadFileBytes.UploadFileBytesMock.defaultExpectation.expectationOrigins.originCtx, *mm_want_ptrs.ctx, mm_got.ctx, minimock.Diff(*mm_want_ptrs.ctx, mm_got.ctx))
 			}
 
-			if mm_want_ptrs.logger != nil && !minimock.Equal(*mm_want_ptrs.logger, mm_got.logger) {
-				mmUploadFileBytes.t.Errorf("MinioIMock.UploadFileBytes got unexpected parameter logger, expected at\n%s:\nwant: %#v\n got: %#v%s\n",
-					mmUploadFileBytes.UploadFileBytesMock.defaultExpectation.expectationOrigins.originLogger, *mm_want_ptrs.logger, mm_got.logger, minimock.Diff(*mm_want_ptrs.logger, mm_got.logger))
-			}
-
-			if mm_want_ptrs.param != nil && !minimock.Equal(*mm_want_ptrs.param, mm_got.param) {
-				mmUploadFileBytes.t.Errorf("MinioIMock.UploadFileBytes got unexpected parameter param, expected at\n%s:\nwant: %#v\n got: %#v%s\n",
-					mmUploadFileBytes.UploadFileBytesMock.defaultExpectation.expectationOrigins.originParam, *mm_want_ptrs.param, mm_got.param, minimock.Diff(*mm_want_ptrs.param, mm_got.param))
+			if mm_want_ptrs.up1 != nil && !minimock.Equal(*mm_want_ptrs.up1, mm_got.up1) {
+				mmUploadFileBytes.t.Errorf("MinioIMock.UploadFileBytes got unexpected parameter up1, expected at\n%s:\nwant: %#v\n got: %#v%s\n",
+					mmUploadFileBytes.UploadFileBytesMock.defaultExpectation.expectationOrigins.originUp1, *mm_want_ptrs.up1, mm_got.up1, minimock.Diff(*mm_want_ptrs.up1, mm_got.up1))
 			}
 
 		} else if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
@@ -1880,9 +1829,9 @@ func (mmUploadFileBytes *MinioIMock) UploadFileBytes(ctx context.Context, logger
 		return (*mm_results).url, (*mm_results).objectInfo, (*mm_results).err
 	}
 	if mmUploadFileBytes.funcUploadFileBytes != nil {
-		return mmUploadFileBytes.funcUploadFileBytes(ctx, logger, param)
+		return mmUploadFileBytes.funcUploadFileBytes(ctx, up1)
 	}
-	mmUploadFileBytes.t.Fatalf("Unexpected call to MinioIMock.UploadFileBytes. %v %v %v", ctx, logger, param)
+	mmUploadFileBytes.t.Fatalf("Unexpected call to MinioIMock.UploadFileBytes. %v %v", ctx, up1)
 	return
 }
 
@@ -1954,6 +1903,317 @@ func (m *MinioIMock) MinimockUploadFileBytesInspect() {
 	}
 }
 
+type mMinioIMockWithLogger struct {
+	optional           bool
+	mock               *MinioIMock
+	defaultExpectation *MinioIMockWithLoggerExpectation
+	expectations       []*MinioIMockWithLoggerExpectation
+
+	callArgs []*MinioIMockWithLoggerParams
+	mutex    sync.RWMutex
+
+	expectedInvocations       uint64
+	expectedInvocationsOrigin string
+}
+
+// MinioIMockWithLoggerExpectation specifies expectation struct of the MinioI.WithLogger
+type MinioIMockWithLoggerExpectation struct {
+	mock               *MinioIMock
+	params             *MinioIMockWithLoggerParams
+	paramPtrs          *MinioIMockWithLoggerParamPtrs
+	expectationOrigins MinioIMockWithLoggerExpectationOrigins
+	results            *MinioIMockWithLoggerResults
+	returnOrigin       string
+	Counter            uint64
+}
+
+// MinioIMockWithLoggerParams contains parameters of the MinioI.WithLogger
+type MinioIMockWithLoggerParams struct {
+	lp1 *zap.Logger
+}
+
+// MinioIMockWithLoggerParamPtrs contains pointers to parameters of the MinioI.WithLogger
+type MinioIMockWithLoggerParamPtrs struct {
+	lp1 **zap.Logger
+}
+
+// MinioIMockWithLoggerResults contains results of the MinioI.WithLogger
+type MinioIMockWithLoggerResults struct {
+	m1 mm_minio.MinioI
+}
+
+// MinioIMockWithLoggerOrigins contains origins of expectations of the MinioI.WithLogger
+type MinioIMockWithLoggerExpectationOrigins struct {
+	origin    string
+	originLp1 string
+}
+
+// Marks this method to be optional. The default behavior of any method with Return() is '1 or more', meaning
+// the test will fail minimock's automatic final call check if the mocked method was not called at least once.
+// Optional() makes method check to work in '0 or more' mode.
+// It is NOT RECOMMENDED to use this option unless you really need it, as default behaviour helps to
+// catch the problems when the expected method call is totally skipped during test run.
+func (mmWithLogger *mMinioIMockWithLogger) Optional() *mMinioIMockWithLogger {
+	mmWithLogger.optional = true
+	return mmWithLogger
+}
+
+// Expect sets up expected params for MinioI.WithLogger
+func (mmWithLogger *mMinioIMockWithLogger) Expect(lp1 *zap.Logger) *mMinioIMockWithLogger {
+	if mmWithLogger.mock.funcWithLogger != nil {
+		mmWithLogger.mock.t.Fatalf("MinioIMock.WithLogger mock is already set by Set")
+	}
+
+	if mmWithLogger.defaultExpectation == nil {
+		mmWithLogger.defaultExpectation = &MinioIMockWithLoggerExpectation{}
+	}
+
+	if mmWithLogger.defaultExpectation.paramPtrs != nil {
+		mmWithLogger.mock.t.Fatalf("MinioIMock.WithLogger mock is already set by ExpectParams functions")
+	}
+
+	mmWithLogger.defaultExpectation.params = &MinioIMockWithLoggerParams{lp1}
+	mmWithLogger.defaultExpectation.expectationOrigins.origin = minimock.CallerInfo(1)
+	for _, e := range mmWithLogger.expectations {
+		if minimock.Equal(e.params, mmWithLogger.defaultExpectation.params) {
+			mmWithLogger.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmWithLogger.defaultExpectation.params)
+		}
+	}
+
+	return mmWithLogger
+}
+
+// ExpectLp1Param1 sets up expected param lp1 for MinioI.WithLogger
+func (mmWithLogger *mMinioIMockWithLogger) ExpectLp1Param1(lp1 *zap.Logger) *mMinioIMockWithLogger {
+	if mmWithLogger.mock.funcWithLogger != nil {
+		mmWithLogger.mock.t.Fatalf("MinioIMock.WithLogger mock is already set by Set")
+	}
+
+	if mmWithLogger.defaultExpectation == nil {
+		mmWithLogger.defaultExpectation = &MinioIMockWithLoggerExpectation{}
+	}
+
+	if mmWithLogger.defaultExpectation.params != nil {
+		mmWithLogger.mock.t.Fatalf("MinioIMock.WithLogger mock is already set by Expect")
+	}
+
+	if mmWithLogger.defaultExpectation.paramPtrs == nil {
+		mmWithLogger.defaultExpectation.paramPtrs = &MinioIMockWithLoggerParamPtrs{}
+	}
+	mmWithLogger.defaultExpectation.paramPtrs.lp1 = &lp1
+	mmWithLogger.defaultExpectation.expectationOrigins.originLp1 = minimock.CallerInfo(1)
+
+	return mmWithLogger
+}
+
+// Inspect accepts an inspector function that has same arguments as the MinioI.WithLogger
+func (mmWithLogger *mMinioIMockWithLogger) Inspect(f func(lp1 *zap.Logger)) *mMinioIMockWithLogger {
+	if mmWithLogger.mock.inspectFuncWithLogger != nil {
+		mmWithLogger.mock.t.Fatalf("Inspect function is already set for MinioIMock.WithLogger")
+	}
+
+	mmWithLogger.mock.inspectFuncWithLogger = f
+
+	return mmWithLogger
+}
+
+// Return sets up results that will be returned by MinioI.WithLogger
+func (mmWithLogger *mMinioIMockWithLogger) Return(m1 mm_minio.MinioI) *MinioIMock {
+	if mmWithLogger.mock.funcWithLogger != nil {
+		mmWithLogger.mock.t.Fatalf("MinioIMock.WithLogger mock is already set by Set")
+	}
+
+	if mmWithLogger.defaultExpectation == nil {
+		mmWithLogger.defaultExpectation = &MinioIMockWithLoggerExpectation{mock: mmWithLogger.mock}
+	}
+	mmWithLogger.defaultExpectation.results = &MinioIMockWithLoggerResults{m1}
+	mmWithLogger.defaultExpectation.returnOrigin = minimock.CallerInfo(1)
+	return mmWithLogger.mock
+}
+
+// Set uses given function f to mock the MinioI.WithLogger method
+func (mmWithLogger *mMinioIMockWithLogger) Set(f func(lp1 *zap.Logger) (m1 mm_minio.MinioI)) *MinioIMock {
+	if mmWithLogger.defaultExpectation != nil {
+		mmWithLogger.mock.t.Fatalf("Default expectation is already set for the MinioI.WithLogger method")
+	}
+
+	if len(mmWithLogger.expectations) > 0 {
+		mmWithLogger.mock.t.Fatalf("Some expectations are already set for the MinioI.WithLogger method")
+	}
+
+	mmWithLogger.mock.funcWithLogger = f
+	mmWithLogger.mock.funcWithLoggerOrigin = minimock.CallerInfo(1)
+	return mmWithLogger.mock
+}
+
+// When sets expectation for the MinioI.WithLogger which will trigger the result defined by the following
+// Then helper
+func (mmWithLogger *mMinioIMockWithLogger) When(lp1 *zap.Logger) *MinioIMockWithLoggerExpectation {
+	if mmWithLogger.mock.funcWithLogger != nil {
+		mmWithLogger.mock.t.Fatalf("MinioIMock.WithLogger mock is already set by Set")
+	}
+
+	expectation := &MinioIMockWithLoggerExpectation{
+		mock:               mmWithLogger.mock,
+		params:             &MinioIMockWithLoggerParams{lp1},
+		expectationOrigins: MinioIMockWithLoggerExpectationOrigins{origin: minimock.CallerInfo(1)},
+	}
+	mmWithLogger.expectations = append(mmWithLogger.expectations, expectation)
+	return expectation
+}
+
+// Then sets up MinioI.WithLogger return parameters for the expectation previously defined by the When method
+func (e *MinioIMockWithLoggerExpectation) Then(m1 mm_minio.MinioI) *MinioIMock {
+	e.results = &MinioIMockWithLoggerResults{m1}
+	return e.mock
+}
+
+// Times sets number of times MinioI.WithLogger should be invoked
+func (mmWithLogger *mMinioIMockWithLogger) Times(n uint64) *mMinioIMockWithLogger {
+	if n == 0 {
+		mmWithLogger.mock.t.Fatalf("Times of MinioIMock.WithLogger mock can not be zero")
+	}
+	mm_atomic.StoreUint64(&mmWithLogger.expectedInvocations, n)
+	mmWithLogger.expectedInvocationsOrigin = minimock.CallerInfo(1)
+	return mmWithLogger
+}
+
+func (mmWithLogger *mMinioIMockWithLogger) invocationsDone() bool {
+	if len(mmWithLogger.expectations) == 0 && mmWithLogger.defaultExpectation == nil && mmWithLogger.mock.funcWithLogger == nil {
+		return true
+	}
+
+	totalInvocations := mm_atomic.LoadUint64(&mmWithLogger.mock.afterWithLoggerCounter)
+	expectedInvocations := mm_atomic.LoadUint64(&mmWithLogger.expectedInvocations)
+
+	return totalInvocations > 0 && (expectedInvocations == 0 || expectedInvocations == totalInvocations)
+}
+
+// WithLogger implements mm_minio.MinioI
+func (mmWithLogger *MinioIMock) WithLogger(lp1 *zap.Logger) (m1 mm_minio.MinioI) {
+	mm_atomic.AddUint64(&mmWithLogger.beforeWithLoggerCounter, 1)
+	defer mm_atomic.AddUint64(&mmWithLogger.afterWithLoggerCounter, 1)
+
+	mmWithLogger.t.Helper()
+
+	if mmWithLogger.inspectFuncWithLogger != nil {
+		mmWithLogger.inspectFuncWithLogger(lp1)
+	}
+
+	mm_params := MinioIMockWithLoggerParams{lp1}
+
+	// Record call args
+	mmWithLogger.WithLoggerMock.mutex.Lock()
+	mmWithLogger.WithLoggerMock.callArgs = append(mmWithLogger.WithLoggerMock.callArgs, &mm_params)
+	mmWithLogger.WithLoggerMock.mutex.Unlock()
+
+	for _, e := range mmWithLogger.WithLoggerMock.expectations {
+		if minimock.Equal(*e.params, mm_params) {
+			mm_atomic.AddUint64(&e.Counter, 1)
+			return e.results.m1
+		}
+	}
+
+	if mmWithLogger.WithLoggerMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmWithLogger.WithLoggerMock.defaultExpectation.Counter, 1)
+		mm_want := mmWithLogger.WithLoggerMock.defaultExpectation.params
+		mm_want_ptrs := mmWithLogger.WithLoggerMock.defaultExpectation.paramPtrs
+
+		mm_got := MinioIMockWithLoggerParams{lp1}
+
+		if mm_want_ptrs != nil {
+
+			if mm_want_ptrs.lp1 != nil && !minimock.Equal(*mm_want_ptrs.lp1, mm_got.lp1) {
+				mmWithLogger.t.Errorf("MinioIMock.WithLogger got unexpected parameter lp1, expected at\n%s:\nwant: %#v\n got: %#v%s\n",
+					mmWithLogger.WithLoggerMock.defaultExpectation.expectationOrigins.originLp1, *mm_want_ptrs.lp1, mm_got.lp1, minimock.Diff(*mm_want_ptrs.lp1, mm_got.lp1))
+			}
+
+		} else if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmWithLogger.t.Errorf("MinioIMock.WithLogger got unexpected parameters, expected at\n%s:\nwant: %#v\n got: %#v%s\n",
+				mmWithLogger.WithLoggerMock.defaultExpectation.expectationOrigins.origin, *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
+		}
+
+		mm_results := mmWithLogger.WithLoggerMock.defaultExpectation.results
+		if mm_results == nil {
+			mmWithLogger.t.Fatal("No results are set for the MinioIMock.WithLogger")
+		}
+		return (*mm_results).m1
+	}
+	if mmWithLogger.funcWithLogger != nil {
+		return mmWithLogger.funcWithLogger(lp1)
+	}
+	mmWithLogger.t.Fatalf("Unexpected call to MinioIMock.WithLogger. %v", lp1)
+	return
+}
+
+// WithLoggerAfterCounter returns a count of finished MinioIMock.WithLogger invocations
+func (mmWithLogger *MinioIMock) WithLoggerAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmWithLogger.afterWithLoggerCounter)
+}
+
+// WithLoggerBeforeCounter returns a count of MinioIMock.WithLogger invocations
+func (mmWithLogger *MinioIMock) WithLoggerBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmWithLogger.beforeWithLoggerCounter)
+}
+
+// Calls returns a list of arguments used in each call to MinioIMock.WithLogger.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmWithLogger *mMinioIMockWithLogger) Calls() []*MinioIMockWithLoggerParams {
+	mmWithLogger.mutex.RLock()
+
+	argCopy := make([]*MinioIMockWithLoggerParams, len(mmWithLogger.callArgs))
+	copy(argCopy, mmWithLogger.callArgs)
+
+	mmWithLogger.mutex.RUnlock()
+
+	return argCopy
+}
+
+// MinimockWithLoggerDone returns true if the count of the WithLogger invocations corresponds
+// the number of defined expectations
+func (m *MinioIMock) MinimockWithLoggerDone() bool {
+	if m.WithLoggerMock.optional {
+		// Optional methods provide '0 or more' call count restriction.
+		return true
+	}
+
+	for _, e := range m.WithLoggerMock.expectations {
+		if mm_atomic.LoadUint64(&e.Counter) < 1 {
+			return false
+		}
+	}
+
+	return m.WithLoggerMock.invocationsDone()
+}
+
+// MinimockWithLoggerInspect logs each unmet expectation
+func (m *MinioIMock) MinimockWithLoggerInspect() {
+	for _, e := range m.WithLoggerMock.expectations {
+		if mm_atomic.LoadUint64(&e.Counter) < 1 {
+			m.t.Errorf("Expected call to MinioIMock.WithLogger at\n%s with params: %#v", e.expectationOrigins.origin, *e.params)
+		}
+	}
+
+	afterWithLoggerCounter := mm_atomic.LoadUint64(&m.afterWithLoggerCounter)
+	// if default expectation was set then invocations count should be greater than zero
+	if m.WithLoggerMock.defaultExpectation != nil && afterWithLoggerCounter < 1 {
+		if m.WithLoggerMock.defaultExpectation.params == nil {
+			m.t.Errorf("Expected call to MinioIMock.WithLogger at\n%s", m.WithLoggerMock.defaultExpectation.returnOrigin)
+		} else {
+			m.t.Errorf("Expected call to MinioIMock.WithLogger at\n%s with params: %#v", m.WithLoggerMock.defaultExpectation.expectationOrigins.origin, *m.WithLoggerMock.defaultExpectation.params)
+		}
+	}
+	// if func was set then invocations count should be greater than zero
+	if m.funcWithLogger != nil && afterWithLoggerCounter < 1 {
+		m.t.Errorf("Expected call to MinioIMock.WithLogger at\n%s", m.funcWithLoggerOrigin)
+	}
+
+	if !m.WithLoggerMock.invocationsDone() && afterWithLoggerCounter > 0 {
+		m.t.Errorf("Expected %d calls to MinioIMock.WithLogger at\n%s but found %d calls",
+			mm_atomic.LoadUint64(&m.WithLoggerMock.expectedInvocations), m.WithLoggerMock.expectedInvocationsOrigin, afterWithLoggerCounter)
+	}
+}
+
 // MinimockFinish checks that all mocked methods have been called the expected number of times
 func (m *MinioIMock) MinimockFinish() {
 	m.finishOnce.Do(func() {
@@ -1967,6 +2227,8 @@ func (m *MinioIMock) MinimockFinish() {
 			m.MinimockUploadFileInspect()
 
 			m.MinimockUploadFileBytesInspect()
+
+			m.MinimockWithLoggerInspect()
 		}
 	})
 }
@@ -1994,5 +2256,6 @@ func (m *MinioIMock) minimockDone() bool {
 		m.MinimockGetFileDone() &&
 		m.MinimockGetFilesByPathsDone() &&
 		m.MinimockUploadFileDone() &&
-		m.MinimockUploadFileBytesDone()
+		m.MinimockUploadFileBytesDone() &&
+		m.MinimockWithLoggerDone()
 }
