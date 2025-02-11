@@ -19,12 +19,14 @@ import (
 	miniogo "github.com/minio/minio-go/v7"
 )
 
+// MinioI defines the methods to interact with MinIO.
 type MinioI interface {
-	UploadFile(ctx context.Context, logger *zap.Logger, param *UploadFileParam) (url string, objectInfo *miniogo.ObjectInfo, err error)
-	UploadFileBytes(ctx context.Context, logger *zap.Logger, param *UploadFileBytesParam) (url string, objectInfo *miniogo.ObjectInfo, err error)
-	DeleteFile(ctx context.Context, logger *zap.Logger, filePath string) (err error)
-	GetFile(ctx context.Context, logger *zap.Logger, filePath string) ([]byte, error)
-	GetFilesByPaths(ctx context.Context, logger *zap.Logger, filePaths []string) ([]FileContent, error)
+	WithLogger(*zap.Logger) MinioI
+	UploadFile(context.Context, *UploadFileParam) (url string, objectInfo *miniogo.ObjectInfo, err error)
+	UploadFileBytes(context.Context, *UploadFileBytesParam) (url string, objectInfo *miniogo.ObjectInfo, err error)
+	DeleteFile(ctx context.Context, userUID uuid.UUID, filePath string) (err error)
+	GetFile(ctx context.Context, userUID uuid.UUID, filePath string) ([]byte, error)
+	GetFilesByPaths(ctx context.Context, userUID uuid.UUID, filePaths []string) ([]FileContent, error)
 }
 
 type ExpiryRule struct {
@@ -43,6 +45,10 @@ type minio struct {
 	client           *miniogo.Client
 	bucket           string
 	expiryRuleConfig map[string]int
+
+	// logger will be used to audit who tries to perform an action on the MinIO
+	// data.
+	logger *zap.Logger
 }
 
 // NewMinioClientAndInitBucket initializes a MinIO bucket (creating it if it
@@ -116,26 +122,47 @@ func NewMinioClientAndInitBucket(ctx context.Context, cfg *Config, logger *zap.L
 		return nil, fmt.Errorf("applying lifecycle rules: %w", err)
 	}
 
-	return &minio{client: client, bucket: cfg.BucketName, expiryRuleConfig: expiryRuleConfig}, nil
+	return &minio{
+		client:           client,
+		bucket:           cfg.BucketName,
+		expiryRuleConfig: expiryRuleConfig,
+		logger:           logger,
+	}, nil
 }
 
+// WithLogger returns a copy of the MinIO client with the provided logger.
+func (m *minio) WithLogger(log *zap.Logger) MinioI {
+	return &minio{
+		client:           m.client,
+		bucket:           m.bucket,
+		expiryRuleConfig: m.expiryRuleConfig,
+		logger:           log.With(zap.String("bucket", m.bucket)),
+	}
+}
+
+// UploadFileParam contains the information to upload a file to MinIO.
 type UploadFileParam struct {
+	UserUID       uuid.UUID
 	FilePath      string
 	FileContent   any
 	FileMimeType  string
 	ExpiryRuleTag string
 }
 
+// UploadFileBytesParam contains the information to upload a data blob to
+// MinIO.
 type UploadFileBytesParam struct {
+	UserUID       uuid.UUID
 	FilePath      string
 	FileBytes     []byte
 	FileMimeType  string
 	ExpiryRuleTag string
 }
 
-func (m *minio) UploadFile(ctx context.Context, logger *zap.Logger, param *UploadFileParam) (url string, objectInfo *miniogo.ObjectInfo, err error) {
+func (m *minio) UploadFile(ctx context.Context, param *UploadFileParam) (url string, objectInfo *miniogo.ObjectInfo, err error) {
 	jsonData, _ := json.Marshal(param.FileContent)
-	return m.UploadFileBytes(ctx, logger, &UploadFileBytesParam{
+	return m.UploadFileBytes(ctx, &UploadFileBytesParam{
+		UserUID:       param.UserUID,
 		FilePath:      param.FilePath,
 		FileBytes:     jsonData,
 		FileMimeType:  param.FileMimeType,
@@ -143,8 +170,8 @@ func (m *minio) UploadFile(ctx context.Context, logger *zap.Logger, param *Uploa
 	})
 }
 
-func (m *minio) UploadFileBytes(ctx context.Context, logger *zap.Logger, param *UploadFileBytesParam) (url string, objectInfo *miniogo.ObjectInfo, err error) {
-	logger.Info("start to upload file to minio", zap.String("filePath", param.FilePath))
+func (m *minio) UploadFileBytes(ctx context.Context, param *UploadFileBytesParam) (url string, objectInfo *miniogo.ObjectInfo, err error) {
+	m.logAction(param.UserUID, "uploadFile", param.FilePath)
 	reader := bytes.NewReader(param.FileBytes)
 
 	// Create the file path with folder structure
@@ -153,11 +180,11 @@ func (m *minio) UploadFileBytes(ctx context.Context, logger *zap.Logger, param *
 		UserTags:    map[string]string{ExpiryTag: param.ExpiryRuleTag},
 	})
 	if err != nil {
-		logger.Error("Failed to upload file to MinIO", zap.Error(err))
 		return "", nil, err
 	}
 
 	// Get the object stat (metadata)
+	m.logAction(param.UserUID, "statObject", param.FilePath)
 	stat, err := m.client.StatObject(ctx, m.bucket, param.FilePath, miniogo.StatObjectOptions{})
 	if err != nil {
 		return "", nil, err
@@ -169,6 +196,8 @@ func (m *minio) UploadFileBytes(ctx context.Context, logger *zap.Logger, param *
 		expiryDays = 7
 	}
 	expiryDuration := time.Hour * 24 * time.Duration(expiryDays)
+
+	m.logAction(param.UserUID, "presignedGetObject", param.FilePath)
 	presignedURL, err := m.client.PresignedGetObject(ctx, m.bucket, param.FilePath, expiryDuration, nil)
 	if err != nil {
 		return "", nil, err
@@ -177,21 +206,23 @@ func (m *minio) UploadFileBytes(ctx context.Context, logger *zap.Logger, param *
 	return presignedURL.String(), &stat, nil
 }
 
-// DeleteFile delete the file from minio
-func (m *minio) DeleteFile(ctx context.Context, logger *zap.Logger, filePath string) (err error) {
+// DeleteFile delete the file frotom minio
+func (m *minio) DeleteFile(ctx context.Context, userUID uuid.UUID, filePath string) (err error) {
+	m.logAction(userUID, "deleteObject", filePath)
 	err = m.client.RemoveObject(ctx, m.bucket, filePath, miniogo.RemoveObjectOptions{})
 	if err != nil {
-		logger.Error("Failed to delete file from MinIO", zap.Error(err))
+		m.logger.Error("Failed to delete file from MinIO", zap.Error(err))
 		return err
 	}
 	return nil
 }
 
 // GetFile Get the object using the client
-func (m *minio) GetFile(ctx context.Context, logger *zap.Logger, filePath string) ([]byte, error) {
+func (m *minio) GetFile(ctx context.Context, userUID uuid.UUID, filePath string) ([]byte, error) {
+	m.logAction(userUID, "getObject", filePath)
 	object, err := m.client.GetObject(ctx, m.bucket, filePath, miniogo.GetObjectOptions{})
 	if err != nil {
-		logger.Error("Failed to get file from MinIO", zap.Error(err))
+		m.logger.Error("Failed to get file from MinIO", zap.Error(err))
 		return nil, err
 	}
 	defer object.Close()
@@ -200,7 +231,7 @@ func (m *minio) GetFile(ctx context.Context, logger *zap.Logger, filePath string
 	buf := new(bytes.Buffer)
 	_, err = buf.ReadFrom(object)
 	if err != nil {
-		logger.Error("Failed to read file from MinIO", zap.Error(err))
+		m.logger.Error("Failed to read file from MinIO", zap.Error(err))
 		return nil, err
 	}
 
@@ -214,7 +245,7 @@ type FileContent struct {
 }
 
 // GetFilesByPaths GetFiles retrieves the contents of specified files from MinIO
-func (m *minio) GetFilesByPaths(ctx context.Context, logger *zap.Logger, filePaths []string) ([]FileContent, error) {
+func (m *minio) GetFilesByPaths(ctx context.Context, userUID uuid.UUID, filePaths []string) ([]FileContent, error) {
 	var wg sync.WaitGroup
 	fileCount := len(filePaths)
 
@@ -226,9 +257,10 @@ func (m *minio) GetFilesByPaths(ctx context.Context, logger *zap.Logger, filePat
 		go func(filePath string) {
 			defer wg.Done()
 
+			m.logAction(userUID, "getObject", filePath)
 			obj, err := m.client.GetObject(ctx, m.bucket, filePath, miniogo.GetObjectOptions{})
 			if err != nil {
-				logger.Error("Failed to get object from MinIO", zap.String("path", filePath), zap.Error(err))
+				m.logger.Error("Failed to get object from MinIO", zap.String("path", filePath), zap.Error(err))
 				errCh <- err
 				return
 			}
@@ -237,7 +269,7 @@ func (m *minio) GetFilesByPaths(ctx context.Context, logger *zap.Logger, filePat
 			var buffer bytes.Buffer
 			_, err = io.Copy(&buffer, obj)
 			if err != nil {
-				logger.Error("Failed to read object content", zap.String("path", filePath), zap.Error(err))
+				m.logger.Error("Failed to read object content", zap.String("path", filePath), zap.Error(err))
 				errCh <- err
 				return
 			}
@@ -326,4 +358,12 @@ func (m *minioClientWrapper) GetFile(ctx context.Context, bucketName, objectPath
 	}
 
 	return data, info.ContentType, nil
+}
+func (m *minio) logAction(userUID uuid.UUID, action, filePath string) {
+	m.logger.Info(
+		"File action in MinIO",
+		zap.String("userUID", userUID.String()),
+		zap.String("path", filePath),
+		zap.String("action", action),
+	)
 }
