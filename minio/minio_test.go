@@ -13,8 +13,6 @@ import (
 )
 
 func TestMinio(t *testing.T) {
-	t.Skipf("only for testing on local")
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
