@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"sync"
 	"time"
 
@@ -18,6 +19,10 @@ import (
 
 	miniogo "github.com/minio/minio-go/v7"
 )
+
+// MinIOHeaderUserUID is sent as metadata as a MinIO header to indicate the
+// user that triggered the MinIO action.
+const MinIOHeaderUserUID = "x-amz-meta-instill-user-uid"
 
 // MinioI defines the methods to interact with MinIO.
 type MinioI interface {
@@ -171,23 +176,29 @@ func (m *minio) UploadFile(ctx context.Context, param *UploadFileParam) (url str
 }
 
 func (m *minio) UploadFileBytes(ctx context.Context, param *UploadFileBytesParam) (url string, objectInfo *miniogo.ObjectInfo, err error) {
-	m.logAction(param.UserUID, "uploadFile", param.FilePath)
 	reader := bytes.NewReader(param.FileBytes)
 
 	// Create the file path with folder structure
-	_, err = m.client.PutObject(ctx, m.bucket, param.FilePath, reader, int64(len(param.FileBytes)), miniogo.PutObjectOptions{
-		ContentType: param.FileMimeType,
-		UserTags:    map[string]string{ExpiryTag: param.ExpiryRuleTag},
-	})
+	_, err = m.client.PutObject(ctx,
+		m.bucket,
+		param.FilePath,
+		reader,
+		int64(len(param.FileBytes)),
+		miniogo.PutObjectOptions{
+			ContentType:  param.FileMimeType,
+			UserTags:     map[string]string{ExpiryTag: param.ExpiryRuleTag},
+			UserMetadata: map[string]string{MinIOHeaderUserUID: param.UserUID.String()},
+		},
+	)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("putting object in MinIO: %w", err)
 	}
 
 	// Get the object stat (metadata)
-	m.logAction(param.UserUID, "statObject", param.FilePath)
-	stat, err := m.client.StatObject(ctx, m.bucket, param.FilePath, miniogo.StatObjectOptions{})
+	statOpts := miniogo.StatObjectOptions(m.getObjectOptions(param.UserUID))
+	stat, err := m.client.StatObject(ctx, m.bucket, param.FilePath, statOpts)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("getting object stats: %w", err)
 	}
 
 	// Generate the presigned URL
@@ -197,10 +208,20 @@ func (m *minio) UploadFileBytes(ctx context.Context, param *UploadFileBytesParam
 	}
 	expiryDuration := time.Hour * 24 * time.Duration(expiryDays)
 
-	m.logAction(param.UserUID, "presignedGetObject", param.FilePath)
-	presignedURL, err := m.client.PresignedGetObject(ctx, m.bucket, param.FilePath, expiryDuration, nil)
+	// We're using PresignHeader in order to be able to pass the user UID in
+	// the request. If PresignedGetObject supports this at any point, we should
+	// use that method.
+	presignedURL, err := m.client.PresignHeader(
+		ctx,
+		http.MethodGet,
+		m.bucket,
+		param.FilePath,
+		expiryDuration,
+		nil,
+		statOpts.Header(),
+	)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("getting presigned object URL: %w", err)
 	}
 
 	return presignedURL.String(), &stat, nil
@@ -208,22 +229,28 @@ func (m *minio) UploadFileBytes(ctx context.Context, param *UploadFileBytesParam
 
 // DeleteFile delete the file frotom minio
 func (m *minio) DeleteFile(ctx context.Context, userUID uuid.UUID, filePath string) (err error) {
-	m.logAction(userUID, "deleteObject", filePath)
+	// MinIO (and S3) API doesn't expose a way to pass headers to the deletion
+	// method. The client will be responsible of logging this information.
+	log := m.logger.With(
+		zap.String("path", filePath),
+		zap.String("userUID", userUID.String()),
+	)
+	log.Info("Object deletion in MinIO")
+
 	err = m.client.RemoveObject(ctx, m.bucket, filePath, miniogo.RemoveObjectOptions{})
 	if err != nil {
-		m.logger.Error("Failed to delete file from MinIO", zap.Error(err))
-		return err
+		log.Error("Failed to delete file from MinIO", zap.Error(err))
+		return fmt.Errorf("removing object in MinIO: %w", err)
 	}
+
 	return nil
 }
 
 // GetFile Get the object using the client
 func (m *minio) GetFile(ctx context.Context, userUID uuid.UUID, filePath string) ([]byte, error) {
-	m.logAction(userUID, "getObject", filePath)
-	object, err := m.client.GetObject(ctx, m.bucket, filePath, miniogo.GetObjectOptions{})
+	object, err := m.client.GetObject(ctx, m.bucket, filePath, m.getObjectOptions(userUID))
 	if err != nil {
-		m.logger.Error("Failed to get file from MinIO", zap.Error(err))
-		return nil, err
+		return nil, fmt.Errorf("getting object from MinIO: %w", err)
 	}
 	defer object.Close()
 
@@ -231,8 +258,7 @@ func (m *minio) GetFile(ctx context.Context, userUID uuid.UUID, filePath string)
 	buf := new(bytes.Buffer)
 	_, err = buf.ReadFrom(object)
 	if err != nil {
-		m.logger.Error("Failed to read file from MinIO", zap.Error(err))
-		return nil, err
+		return nil, fmt.Errorf("reading MinIO object: %w", err)
 	}
 
 	return buf.Bytes(), nil
@@ -257,26 +283,15 @@ func (m *minio) GetFilesByPaths(ctx context.Context, userUID uuid.UUID, filePath
 		go func(filePath string) {
 			defer wg.Done()
 
-			m.logAction(userUID, "getObject", filePath)
-			obj, err := m.client.GetObject(ctx, m.bucket, filePath, miniogo.GetObjectOptions{})
+			obj, err := m.GetFile(ctx, userUID, filePath)
 			if err != nil {
-				m.logger.Error("Failed to get object from MinIO", zap.String("path", filePath), zap.Error(err))
-				errCh <- err
-				return
-			}
-			defer obj.Close()
-
-			var buffer bytes.Buffer
-			_, err = io.Copy(&buffer, obj)
-			if err != nil {
-				m.logger.Error("Failed to read object content", zap.String("path", filePath), zap.Error(err))
 				errCh <- err
 				return
 			}
 
 			fileContent := FileContent{
 				Name:    filePath,
-				Content: buffer.Bytes(),
+				Content: obj,
 			}
 			resultCh <- fileContent
 		}(path)
@@ -359,11 +374,9 @@ func (m *minioClientWrapper) GetFile(ctx context.Context, bucketName, objectPath
 
 	return data, info.ContentType, nil
 }
-func (m *minio) logAction(userUID uuid.UUID, action, filePath string) {
-	m.logger.Info(
-		"File action in MinIO",
-		zap.String("userUID", userUID.String()),
-		zap.String("path", filePath),
-		zap.String("action", action),
-	)
+
+func (m *minio) getObjectOptions(userUID uuid.UUID) miniogo.GetObjectOptions {
+	opts := miniogo.GetObjectOptions{}
+	opts.Set(MinIOHeaderUserUID, userUID.String())
+	return opts
 }
