@@ -20,8 +20,8 @@ import (
 	miniogo "github.com/minio/minio-go/v7"
 )
 
-// MinIOHeaderUserUID is sent as metadata as a MinIO header to indicate the
-// user that triggered the MinIO action.
+// MinIOHeaderUserUID is sent as metadata in MinIO request headers to indicate
+// the user that triggered the action.
 const MinIOHeaderUserUID = "x-amz-meta-instill-user-uid"
 
 // MinioI defines the methods to interact with MinIO.
@@ -56,11 +56,27 @@ type minio struct {
 	logger *zap.Logger
 }
 
+// AppInfo contains the name and version of the requester.
+type AppInfo struct {
+	Name    string
+	Version string
+}
+
+// ClientParams contains the information required to initialize a MinIO
+// client.
+type ClientParams struct {
+	Config      Config
+	Logger      *zap.Logger
+	ExpiryRules []ExpiryRule
+	AppInfo     AppInfo
+}
+
 // NewMinioClientAndInitBucket initializes a MinIO bucket (creating it if it
 // doesn't exist and applying the lifecycle rules specified in the
 // configuration) and returns a client to interact with such bucket.
-func NewMinioClientAndInitBucket(ctx context.Context, cfg *Config, logger *zap.Logger, expiryRules ...ExpiryRule) (MinioI, error) {
-	logger = logger.With(zap.String("bucket", cfg.BucketName))
+func NewMinioClientAndInitBucket(ctx context.Context, params ClientParams) (MinioI, error) {
+	cfg := params.Config
+	logger := params.Logger.With(zap.String("bucket", cfg.BucketName))
 	logger.Info("Initializing MinIO client and bucket")
 
 	endpoint := net.JoinHostPort(cfg.Host, cfg.Port)
@@ -71,6 +87,8 @@ func NewMinioClientAndInitBucket(ctx context.Context, cfg *Config, logger *zap.L
 	if err != nil {
 		return nil, fmt.Errorf("connecting to MinIO: %w", err)
 	}
+
+	client.SetAppInfo(params.AppInfo.Name, params.AppInfo.Version)
 
 	exists, err := client.BucketExists(ctx, cfg.BucketName)
 	if err != nil {
@@ -89,10 +107,10 @@ func NewMinioClientAndInitBucket(ctx context.Context, cfg *Config, logger *zap.L
 	}
 
 	lccfg := lifecycle.NewConfiguration()
-	lccfg.Rules = make([]lifecycle.Rule, 0, len(expiryRules))
+	lccfg.Rules = make([]lifecycle.Rule, 0, len(params.ExpiryRules))
 
 	expiryRuleConfig := make(map[string]int)
-	for _, expiryRule := range expiryRules {
+	for _, expiryRule := range params.ExpiryRules {
 		expiryRuleConfig[expiryRule.Tag] = expiryRule.ExpirationDays
 		if expiryRule.ExpirationDays <= 0 {
 			// On MinIO, we can define expiration rules for tags, but we can't

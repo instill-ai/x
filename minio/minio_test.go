@@ -17,13 +17,17 @@ func TestMinio(t *testing.T) {
 	defer cancel()
 
 	log, _ := zap.NewDevelopment()
-	mc, err := miniox.NewMinioClientAndInitBucket(ctx, &miniox.Config{
-		Host:       "localhost",
-		Port:       "19000",
-		RootUser:   "minioadmin",
-		RootPwd:    "minioadmin",
-		BucketName: "instill-ai-model",
-	}, log)
+	params := miniox.ClientParams{
+		Logger: log,
+		Config: miniox.Config{
+			Host:       "localhost",
+			Port:       "19000",
+			RootUser:   "minioadmin",
+			RootPwd:    "minioadmin",
+			BucketName: "instill-ai-model",
+		},
+	}
+	mc, err := miniox.NewMinioClientAndInitBucket(ctx, params)
 
 	require.NoError(t, err)
 
