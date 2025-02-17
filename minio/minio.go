@@ -81,7 +81,7 @@ func NewMinioClientAndInitBucket(ctx context.Context, params ClientParams) (Mini
 
 	endpoint := net.JoinHostPort(cfg.Host, cfg.Port)
 	client, err := miniogo.New(endpoint, &miniogo.Options{
-		Creds:  credentials.NewStaticV4(cfg.RootUser, cfg.RootPwd, ""),
+		Creds:  credentials.NewStaticV4(cfg.User, cfg.Password, ""),
 		Secure: cfg.Secure,
 	})
 	if err != nil {
@@ -359,7 +359,7 @@ func NewMinioClient(ctx context.Context, cfg *Config, logger *zap.Logger) (*mini
 
 	endpoint := net.JoinHostPort(cfg.Host, cfg.Port)
 	client, err := miniogo.New(endpoint, &miniogo.Options{
-		Creds:  credentials.NewStaticV4(cfg.RootUser, cfg.RootPwd, ""),
+		Creds:  credentials.NewStaticV4(cfg.User, cfg.Password, ""),
 		Secure: cfg.Secure,
 	})
 	if err != nil {
