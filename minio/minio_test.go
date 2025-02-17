@@ -22,8 +22,8 @@ func TestMinio(t *testing.T) {
 		Config: miniox.Config{
 			Host:       "localhost",
 			Port:       "19000",
-			RootUser:   "minioadmin",
-			RootPwd:    "minioadmin",
+			User:       "minioadmin",
+			Password:   "minioadmin",
 			BucketName: "instill-ai-model",
 		},
 	}
