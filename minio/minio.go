@@ -20,13 +20,9 @@ import (
 	miniogo "github.com/minio/minio-go/v7"
 )
 
-// MinIOHeaderUserUID is sent as metadata in MinIO request headers to indicate
-// the user that triggered the action.
-const MinIOHeaderUserUID = "x-amz-meta-instill-user-uid"
-
-// MinioI defines the methods to interact with MinIO.
-type MinioI interface {
-	WithLogger(*zap.Logger) MinioI
+// Client defines the methods to interact with MinIO.
+type Client interface {
+	WithLogger(*zap.Logger) Client
 	UploadFile(context.Context, *UploadFileParam) (url string, objectInfo *miniogo.ObjectInfo, err error)
 	UploadFileBytes(context.Context, *UploadFileBytesParam) (url string, objectInfo *miniogo.ObjectInfo, err error)
 	DeleteFile(ctx context.Context, userUID uuid.UUID, filePath string) (err error)
@@ -34,26 +30,33 @@ type MinioI interface {
 	GetFilesByPaths(ctx context.Context, userUID uuid.UUID, filePaths []string) ([]FileContent, error)
 }
 
+// ExpiryRule defines an expiration policy for tagged objects.
 type ExpiryRule struct {
 	Tag            string
 	ExpirationDays int
 }
 
 const (
+	// Location is the default location of MinIO buckets.
 	Location = "us-east-1"
+	// MinIOHeaderUserUID is sent as metadata in MinIO request headers to indicate
+	// the user that triggered the action.
+	MinIOHeaderUserUID = "x-amz-meta-instill-user-uid"
 
-	StatusEnabled = "Enabled"
-	ExpiryTag     = "expiry-group"
+	statusEnabled = "Enabled"
+	expiryTag     = "expiry-group"
 )
 
-type minio struct {
-	client           *miniogo.Client
-	bucket           string
-	expiryRuleConfig map[string]int
+// GenerateInputRefID returns a prefixed object path or an input file.
+func GenerateInputRefID(prefix string) string {
+	referenceUID, _ := uuid.NewV4()
+	return prefix + "/input/" + referenceUID.String()
+}
 
-	// logger will be used to audit who tries to perform an action on the MinIO
-	// data.
-	logger *zap.Logger
+// GenerateOutputRefID returns a prefixed object path or an ouptut file.
+func GenerateOutputRefID(prefix string) string {
+	referenceUID, _ := uuid.NewV4()
+	return prefix + "/output/" + referenceUID.String()
 }
 
 // AppInfo contains the name and version of the requester.
@@ -71,24 +74,76 @@ type ClientParams struct {
 	AppInfo     AppInfo
 }
 
-// NewMinioClientAndInitBucket initializes a MinIO bucket (creating it if it
-// doesn't exist and applying the lifecycle rules specified in the
-// configuration) and returns a client to interact with such bucket.
-func NewMinioClientAndInitBucket(ctx context.Context, params ClientParams) (MinioI, error) {
+// FileGetter fetches files from the MinIO blob storage.
+type FileGetter struct {
+	client *miniogo.Client
+	logger *zap.Logger
+}
+
+// NewFileGetter returns a MinIO client that is able to fetch files.
+func NewFileGetter(params ClientParams) (*FileGetter, error) {
+	logger := params.Logger
+	logger.Info("Initializing MinIO client")
+
+	client, err := newClient(params)
+	if err != nil {
+		return nil, err
+	}
+
+	return &FileGetter{
+		client: client,
+		logger: logger,
+	}, nil
+}
+
+// GetFileParams contains the information to fetch a file from MinIO.
+type GetFileParams struct {
+	// UserUID is the authenticated user that's requesting the file.
+	UserUID    uuid.UUID
+	BucketName string
+	Path       string
+}
+
+// GetFile fetches a file from MinIO.
+func (fg *FileGetter) GetFile(ctx context.Context, p GetFileParams) (data []byte, contentType string, err error) {
+	object, err := fg.client.GetObject(ctx, p.BucketName, p.Path, getObjectOptions(p.UserUID))
+	if err != nil {
+		return nil, "", fmt.Errorf("fetching object: %w", err)
+	}
+	defer object.Close()
+
+	info, err := object.Stat()
+	if err != nil {
+		return nil, "", fmt.Errorf("getting object info: %w", err)
+	}
+
+	data, err = io.ReadAll(object)
+	if err != nil {
+		return nil, "", fmt.Errorf("reading object: %w", err)
+	}
+
+	return data, info.ContentType, nil
+}
+
+type minio struct {
+	client           *miniogo.Client
+	bucket           string
+	expiryRuleConfig map[string]int
+	logger           *zap.Logger
+}
+
+// NewMinIOClientAndInitBucket initializes a MinIO bucket (creating it if it
+// doesn't exist) applies the lifecycle rules specified in the configuration
+// and returns a client to interact with such bucket.
+func NewMinIOClientAndInitBucket(ctx context.Context, params ClientParams) (Client, error) {
 	cfg := params.Config
 	logger := params.Logger.With(zap.String("bucket", cfg.BucketName))
 	logger.Info("Initializing MinIO client and bucket")
 
-	endpoint := net.JoinHostPort(cfg.Host, cfg.Port)
-	client, err := miniogo.New(endpoint, &miniogo.Options{
-		Creds:  credentials.NewStaticV4(cfg.User, cfg.Password, ""),
-		Secure: cfg.Secure,
-	})
+	client, err := newClient(params)
 	if err != nil {
-		return nil, fmt.Errorf("connecting to MinIO: %w", err)
+		return nil, err
 	}
-
-	client.SetAppInfo(params.AppInfo.Name, params.AppInfo.Version)
 
 	exists, err := client.BucketExists(ctx, cfg.BucketName)
 	if err != nil {
@@ -127,13 +182,13 @@ func NewMinioClientAndInitBucket(ctx context.Context, params ClientParams) (Mini
 
 		lccfg.Rules = append(lccfg.Rules, lifecycle.Rule{
 			ID:     expiryRule.Tag,
-			Status: StatusEnabled,
+			Status: statusEnabled,
 			Expiration: lifecycle.Expiration{
 				Days: lifecycle.ExpirationDays(expiryRule.ExpirationDays),
 			},
 			RuleFilter: lifecycle.Filter{
 				Tag: lifecycle.Tag{
-					Key:   ExpiryTag,
+					Key:   expiryTag,
 					Value: expiryRule.Tag,
 				},
 			},
@@ -154,7 +209,7 @@ func NewMinioClientAndInitBucket(ctx context.Context, params ClientParams) (Mini
 }
 
 // WithLogger returns a copy of the MinIO client with the provided logger.
-func (m *minio) WithLogger(log *zap.Logger) MinioI {
+func (m *minio) WithLogger(log *zap.Logger) Client {
 	return &minio{
 		client:           m.client,
 		bucket:           m.bucket,
@@ -204,7 +259,7 @@ func (m *minio) UploadFileBytes(ctx context.Context, param *UploadFileBytesParam
 		int64(len(param.FileBytes)),
 		miniogo.PutObjectOptions{
 			ContentType:  param.FileMimeType,
-			UserTags:     map[string]string{ExpiryTag: param.ExpiryRuleTag},
+			UserTags:     map[string]string{expiryTag: param.ExpiryRuleTag},
 			UserMetadata: map[string]string{MinIOHeaderUserUID: param.UserUID.String()},
 		},
 	)
@@ -213,7 +268,7 @@ func (m *minio) UploadFileBytes(ctx context.Context, param *UploadFileBytesParam
 	}
 
 	// Get the object stat (metadata)
-	statOpts := miniogo.StatObjectOptions(m.getObjectOptions(param.UserUID))
+	statOpts := miniogo.StatObjectOptions(getObjectOptions(param.UserUID))
 	stat, err := m.client.StatObject(ctx, m.bucket, param.FilePath, statOpts)
 	if err != nil {
 		return "", nil, fmt.Errorf("getting object stats: %w", err)
@@ -266,7 +321,7 @@ func (m *minio) DeleteFile(ctx context.Context, userUID uuid.UUID, filePath stri
 
 // GetFile Get the object using the client
 func (m *minio) GetFile(ctx context.Context, userUID uuid.UUID, filePath string) ([]byte, error) {
-	object, err := m.client.GetObject(ctx, m.bucket, filePath, m.getObjectOptions(userUID))
+	object, err := m.client.GetObject(ctx, m.bucket, filePath, getObjectOptions(userUID))
 	if err != nil {
 		return nil, fmt.Errorf("getting object from MinIO: %w", err)
 	}
@@ -337,25 +392,8 @@ func (m *minio) GetFilesByPaths(ctx context.Context, userUID uuid.UUID, filePath
 	return files, nil
 }
 
-func GenerateInputRefID(prefix string) string {
-	referenceUID, _ := uuid.NewV4()
-	return prefix + "/input/" + referenceUID.String()
-}
-
-func GenerateOutputRefID(prefix string) string {
-	referenceUID, _ := uuid.NewV4()
-	return prefix + "/output/" + referenceUID.String()
-}
-
-// It's used for the operations that don't need to initialize a bucket
-// We will refactor the MinIO shared logic in the future
-type minioClientWrapper struct {
-	client *miniogo.Client
-}
-
-// NewMinioClient returns a new MinIO client.
-func NewMinioClient(ctx context.Context, cfg *Config, logger *zap.Logger) (*minioClientWrapper, error) {
-	logger.Info("Initializing MinIO client")
+func newClient(params ClientParams) (*miniogo.Client, error) {
+	cfg := params.Config
 
 	endpoint := net.JoinHostPort(cfg.Host, cfg.Port)
 	client, err := miniogo.New(endpoint, &miniogo.Options{
@@ -366,34 +404,12 @@ func NewMinioClient(ctx context.Context, cfg *Config, logger *zap.Logger) (*mini
 		return nil, fmt.Errorf("connecting to MinIO: %w", err)
 	}
 
-	return &minioClientWrapper{client: client}, nil
+	client.SetAppInfo(params.AppInfo.Name, params.AppInfo.Version)
+
+	return client, nil
 }
 
-// GetFile fetches a file from minio
-func (m *minioClientWrapper) GetFile(ctx context.Context, bucketName, objectPath string) (data []byte, contentType string, err error) {
-	object, err := m.client.GetObject(ctx, bucketName, objectPath, miniogo.GetObjectOptions{})
-
-	if err != nil {
-		return nil, "", fmt.Errorf("get object: %w", err)
-	}
-
-	defer object.Close()
-
-	info, err := object.Stat()
-
-	if err != nil {
-		return nil, "", fmt.Errorf("get object info: %w", err)
-	}
-	data, err = io.ReadAll(object)
-
-	if err != nil {
-		return nil, "", fmt.Errorf("read object: %w", err)
-	}
-
-	return data, info.ContentType, nil
-}
-
-func (m *minio) getObjectOptions(userUID uuid.UUID) miniogo.GetObjectOptions {
+func getObjectOptions(userUID uuid.UUID) miniogo.GetObjectOptions {
 	opts := miniogo.GetObjectOptions{}
 	opts.Set(MinIOHeaderUserUID, userUID.String())
 	return opts

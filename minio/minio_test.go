@@ -27,7 +27,7 @@ func TestMinio(t *testing.T) {
 			BucketName: "instill-ai-model",
 		},
 	}
-	mc, err := miniox.NewMinioClientAndInitBucket(ctx, params)
+	mc, err := miniox.NewMinIOClientAndInitBucket(ctx, params)
 
 	require.NoError(t, err)
 
