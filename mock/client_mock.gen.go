@@ -20,6 +20,13 @@ type ClientMock struct {
 	t          minimock.Tester
 	finishOnce sync.Once
 
+	funcClient          func() (cp1 *miniogo.Client)
+	funcClientOrigin    string
+	inspectFuncClient   func()
+	afterClientCounter  uint64
+	beforeClientCounter uint64
+	ClientMock          mClientMockClient
+
 	funcDeleteFile          func(ctx context.Context, userUID uuid.UUID, filePath string) (err error)
 	funcDeleteFileOrigin    string
 	inspectFuncDeleteFile   func(ctx context.Context, userUID uuid.UUID, filePath string)
@@ -71,6 +78,8 @@ func NewClientMock(t minimock.Tester) *ClientMock {
 		controller.RegisterMocker(m)
 	}
 
+	m.ClientMock = mClientMockClient{mock: m}
+
 	m.DeleteFileMock = mClientMockDeleteFile{mock: m}
 	m.DeleteFileMock.callArgs = []*ClientMockDeleteFileParams{}
 
@@ -92,6 +101,192 @@ func NewClientMock(t minimock.Tester) *ClientMock {
 	t.Cleanup(m.MinimockFinish)
 
 	return m
+}
+
+type mClientMockClient struct {
+	optional           bool
+	mock               *ClientMock
+	defaultExpectation *ClientMockClientExpectation
+	expectations       []*ClientMockClientExpectation
+
+	expectedInvocations       uint64
+	expectedInvocationsOrigin string
+}
+
+// ClientMockClientExpectation specifies expectation struct of the Client.Client
+type ClientMockClientExpectation struct {
+	mock *ClientMock
+
+	results      *ClientMockClientResults
+	returnOrigin string
+	Counter      uint64
+}
+
+// ClientMockClientResults contains results of the Client.Client
+type ClientMockClientResults struct {
+	cp1 *miniogo.Client
+}
+
+// Marks this method to be optional. The default behavior of any method with Return() is '1 or more', meaning
+// the test will fail minimock's automatic final call check if the mocked method was not called at least once.
+// Optional() makes method check to work in '0 or more' mode.
+// It is NOT RECOMMENDED to use this option unless you really need it, as default behaviour helps to
+// catch the problems when the expected method call is totally skipped during test run.
+func (mmClient *mClientMockClient) Optional() *mClientMockClient {
+	mmClient.optional = true
+	return mmClient
+}
+
+// Expect sets up expected params for Client.Client
+func (mmClient *mClientMockClient) Expect() *mClientMockClient {
+	if mmClient.mock.funcClient != nil {
+		mmClient.mock.t.Fatalf("ClientMock.Client mock is already set by Set")
+	}
+
+	if mmClient.defaultExpectation == nil {
+		mmClient.defaultExpectation = &ClientMockClientExpectation{}
+	}
+
+	return mmClient
+}
+
+// Inspect accepts an inspector function that has same arguments as the Client.Client
+func (mmClient *mClientMockClient) Inspect(f func()) *mClientMockClient {
+	if mmClient.mock.inspectFuncClient != nil {
+		mmClient.mock.t.Fatalf("Inspect function is already set for ClientMock.Client")
+	}
+
+	mmClient.mock.inspectFuncClient = f
+
+	return mmClient
+}
+
+// Return sets up results that will be returned by Client.Client
+func (mmClient *mClientMockClient) Return(cp1 *miniogo.Client) *ClientMock {
+	if mmClient.mock.funcClient != nil {
+		mmClient.mock.t.Fatalf("ClientMock.Client mock is already set by Set")
+	}
+
+	if mmClient.defaultExpectation == nil {
+		mmClient.defaultExpectation = &ClientMockClientExpectation{mock: mmClient.mock}
+	}
+	mmClient.defaultExpectation.results = &ClientMockClientResults{cp1}
+	mmClient.defaultExpectation.returnOrigin = minimock.CallerInfo(1)
+	return mmClient.mock
+}
+
+// Set uses given function f to mock the Client.Client method
+func (mmClient *mClientMockClient) Set(f func() (cp1 *miniogo.Client)) *ClientMock {
+	if mmClient.defaultExpectation != nil {
+		mmClient.mock.t.Fatalf("Default expectation is already set for the Client.Client method")
+	}
+
+	if len(mmClient.expectations) > 0 {
+		mmClient.mock.t.Fatalf("Some expectations are already set for the Client.Client method")
+	}
+
+	mmClient.mock.funcClient = f
+	mmClient.mock.funcClientOrigin = minimock.CallerInfo(1)
+	return mmClient.mock
+}
+
+// Times sets number of times Client.Client should be invoked
+func (mmClient *mClientMockClient) Times(n uint64) *mClientMockClient {
+	if n == 0 {
+		mmClient.mock.t.Fatalf("Times of ClientMock.Client mock can not be zero")
+	}
+	mm_atomic.StoreUint64(&mmClient.expectedInvocations, n)
+	mmClient.expectedInvocationsOrigin = minimock.CallerInfo(1)
+	return mmClient
+}
+
+func (mmClient *mClientMockClient) invocationsDone() bool {
+	if len(mmClient.expectations) == 0 && mmClient.defaultExpectation == nil && mmClient.mock.funcClient == nil {
+		return true
+	}
+
+	totalInvocations := mm_atomic.LoadUint64(&mmClient.mock.afterClientCounter)
+	expectedInvocations := mm_atomic.LoadUint64(&mmClient.expectedInvocations)
+
+	return totalInvocations > 0 && (expectedInvocations == 0 || expectedInvocations == totalInvocations)
+}
+
+// Client implements mm_minio.Client
+func (mmClient *ClientMock) Client() (cp1 *miniogo.Client) {
+	mm_atomic.AddUint64(&mmClient.beforeClientCounter, 1)
+	defer mm_atomic.AddUint64(&mmClient.afterClientCounter, 1)
+
+	mmClient.t.Helper()
+
+	if mmClient.inspectFuncClient != nil {
+		mmClient.inspectFuncClient()
+	}
+
+	if mmClient.ClientMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmClient.ClientMock.defaultExpectation.Counter, 1)
+
+		mm_results := mmClient.ClientMock.defaultExpectation.results
+		if mm_results == nil {
+			mmClient.t.Fatal("No results are set for the ClientMock.Client")
+		}
+		return (*mm_results).cp1
+	}
+	if mmClient.funcClient != nil {
+		return mmClient.funcClient()
+	}
+	mmClient.t.Fatalf("Unexpected call to ClientMock.Client.")
+	return
+}
+
+// ClientAfterCounter returns a count of finished ClientMock.Client invocations
+func (mmClient *ClientMock) ClientAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmClient.afterClientCounter)
+}
+
+// ClientBeforeCounter returns a count of ClientMock.Client invocations
+func (mmClient *ClientMock) ClientBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmClient.beforeClientCounter)
+}
+
+// MinimockClientDone returns true if the count of the Client invocations corresponds
+// the number of defined expectations
+func (m *ClientMock) MinimockClientDone() bool {
+	if m.ClientMock.optional {
+		// Optional methods provide '0 or more' call count restriction.
+		return true
+	}
+
+	for _, e := range m.ClientMock.expectations {
+		if mm_atomic.LoadUint64(&e.Counter) < 1 {
+			return false
+		}
+	}
+
+	return m.ClientMock.invocationsDone()
+}
+
+// MinimockClientInspect logs each unmet expectation
+func (m *ClientMock) MinimockClientInspect() {
+	for _, e := range m.ClientMock.expectations {
+		if mm_atomic.LoadUint64(&e.Counter) < 1 {
+			m.t.Error("Expected call to ClientMock.Client")
+		}
+	}
+
+	afterClientCounter := mm_atomic.LoadUint64(&m.afterClientCounter)
+	// if default expectation was set then invocations count should be greater than zero
+	if m.ClientMock.defaultExpectation != nil && afterClientCounter < 1 {
+		m.t.Errorf("Expected call to ClientMock.Client at\n%s", m.ClientMock.defaultExpectation.returnOrigin)
+	}
+	// if func was set then invocations count should be greater than zero
+	if m.funcClient != nil && afterClientCounter < 1 {
+		m.t.Errorf("Expected call to ClientMock.Client at\n%s", m.funcClientOrigin)
+	}
+
+	if !m.ClientMock.invocationsDone() && afterClientCounter > 0 {
+		m.t.Errorf("Expected %d calls to ClientMock.Client at\n%s but found %d calls",
+			mm_atomic.LoadUint64(&m.ClientMock.expectedInvocations), m.ClientMock.expectedInvocationsOrigin, afterClientCounter)
+	}
 }
 
 type mClientMockDeleteFile struct {
@@ -2218,6 +2413,8 @@ func (m *ClientMock) MinimockWithLoggerInspect() {
 func (m *ClientMock) MinimockFinish() {
 	m.finishOnce.Do(func() {
 		if !m.minimockDone() {
+			m.MinimockClientInspect()
+
 			m.MinimockDeleteFileInspect()
 
 			m.MinimockGetFileInspect()
@@ -2252,6 +2449,7 @@ func (m *ClientMock) MinimockWait(timeout mm_time.Duration) {
 func (m *ClientMock) minimockDone() bool {
 	done := true
 	return done &&
+		m.MinimockClientDone() &&
 		m.MinimockDeleteFileDone() &&
 		m.MinimockGetFileDone() &&
 		m.MinimockGetFilesByPathsDone() &&
