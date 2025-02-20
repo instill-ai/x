@@ -28,6 +28,12 @@ type Client interface {
 	DeleteFile(ctx context.Context, userUID uuid.UUID, filePath string) (err error)
 	GetFile(ctx context.Context, userUID uuid.UUID, filePath string) ([]byte, error)
 	GetFilesByPaths(ctx context.Context, userUID uuid.UUID, filePaths []string) ([]FileContent, error)
+
+	// Client returns MinIO's SDK client. This is used to migrate progressively
+	// services like `artifact-backend` to adopt this package. Eventually, the
+	// SDK client shouldn't be exposed and services should only use public
+	// methods in this package.
+	Client() *miniogo.Client
 }
 
 // ExpiryRule defines an expiration policy for tagged objects.
@@ -217,6 +223,9 @@ func (m *minio) WithLogger(log *zap.Logger) Client {
 		logger:           log.With(zap.String("bucket", m.bucket)),
 	}
 }
+
+// Client returns the internal MinIO SDK client.
+func (m *minio) Client() *miniogo.Client { return m.client }
 
 // UploadFileParam contains the information to upload a file to MinIO.
 type UploadFileParam struct {
