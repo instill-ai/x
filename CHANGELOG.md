@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.0-alpha](https://github.com/instill-ai/x/compare/v0.6.0-alpha...v0.7.0-alpha) (2025-02-24)
+
+
+### Features
+
+* **minio:** add app info to MinIO client ([#37](https://github.com/instill-ai/x/issues/37)) ([8000506](https://github.com/instill-ai/x/commit/8000506aa4551228dd1f52cfca225fab206d9afd))
+* **minio:** add client info and user header to bucketless client ([#39](https://github.com/instill-ai/x/issues/39)) ([87c3450](https://github.com/instill-ai/x/commit/87c34501e6cdc86546a900c1f3269ec5fb5ce2b9))
+* **minio:** expose SDK client to ease migration to x/minio ([#40](https://github.com/instill-ai/x/issues/40)) ([be48bc7](https://github.com/instill-ai/x/commit/be48bc78368d145e643aa1270b38f57636ecf586))
+* **minio:** log MinIO actions with requester ([#34](https://github.com/instill-ai/x/issues/34)) ([1b1559c](https://github.com/instill-ai/x/commit/1b1559c35b51e698a53472bae61e925354f816a0))
+* **minio:** pass UserUID as header and delegate logging to MinIO ([#36](https://github.com/instill-ai/x/issues/36)) ([6af31ff](https://github.com/instill-ai/x/commit/6af31ff7cc27ca2f14c00fa5c932798a7a0d09f1))
+* **minio:** test minio package on CI ([#35](https://github.com/instill-ai/x/issues/35)) ([e3ab78c](https://github.com/instill-ai/x/commit/e3ab78c6d1b81ae494fd9b1d2819207f4ea59b98))
+
+
+### Bug Fixes
+
+* **mod:** update golang.org/x/net module to fix vulnerability issue ([#32](https://github.com/instill-ai/x/issues/32)) ([0c9fa95](https://github.com/instill-ai/x/commit/0c9fa957ecaa076dda39e901ac887c3a31d08f99))
+
 ## [0.6.0-alpha](https://github.com/instill-ai/x/compare/v0.5.0-alpha...v0.6.0-alpha) (2024-12-13)
 
 
