@@ -1,6 +1,8 @@
 module github.com/instill-ai/x
 
-go 1.22
+go 1.23.0
+
+toolchain go1.23.7
 
 require (
 	github.com/frankban/quicktest v1.14.6
@@ -44,9 +46,9 @@ require (
 	go.temporal.io/api v1.44.1 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.6.0 // indirect
-	golang.org/x/crypto v0.33.0 // indirect
+	golang.org/x/crypto v0.35.0 // indirect
 	golang.org/x/exp v0.0.0-20231127185646-65229373498e // indirect
-	golang.org/x/net v0.35.0 // indirect
+	golang.org/x/net v0.36.0 // indirect
 	golang.org/x/sync v0.11.0 // indirect
 	golang.org/x/sys v0.30.0 // indirect
 	golang.org/x/text v0.22.0 // indirect
