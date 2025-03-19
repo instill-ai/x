@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0-alpha](https://github.com/instill-ai/x/compare/v0.7.0-alpha...v0.8.0-alpha) (2025-03-19)
+
+
+### Features
+
+* **minio:** add private blob upload ([#43](https://github.com/instill-ai/x/issues/43)) ([bd27e04](https://github.com/instill-ai/x/commit/bd27e04e1246009e9b7dbe7008e768add5450929))
+
 ## [0.7.0-alpha](https://github.com/instill-ai/x/compare/v0.6.0-alpha...v0.7.0-alpha) (2025-02-24)
 
 
