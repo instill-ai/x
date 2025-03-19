@@ -22,9 +22,19 @@ import (
 
 // Client defines the methods to interact with MinIO.
 type Client interface {
+	// WithLogger sets the Client logger.
 	WithLogger(*zap.Logger) Client
+
+	// UploadPrivateFileBytes uploads a data blob to be used internally. The
+	// uploaded object will only be accessible through its file path and its
+	// URL won't be publicly exposed.
+	UploadPrivateFileBytes(context.Context, UploadFileBytesParam) error
+
+	// UploadFile[Bytes] uploads a data blob and returns the object information
+	// and a presigned URL to access it publicly.
 	UploadFile(context.Context, *UploadFileParam) (url string, objectInfo *miniogo.ObjectInfo, err error)
 	UploadFileBytes(context.Context, *UploadFileBytesParam) (url string, objectInfo *miniogo.ObjectInfo, err error)
+
 	DeleteFile(ctx context.Context, userUID uuid.UUID, filePath string) (err error)
 	GetFile(ctx context.Context, userUID uuid.UUID, filePath string) ([]byte, error)
 	GetFilesByPaths(ctx context.Context, userUID uuid.UUID, filePaths []string) ([]FileContent, error)
@@ -257,14 +267,11 @@ func (m *minio) UploadFile(ctx context.Context, param *UploadFileParam) (url str
 	})
 }
 
-func (m *minio) UploadFileBytes(ctx context.Context, param *UploadFileBytesParam) (url string, objectInfo *miniogo.ObjectInfo, err error) {
-	reader := bytes.NewReader(param.FileBytes)
-
-	// Create the file path with folder structure
-	_, err = m.client.PutObject(ctx,
+func (m *minio) UploadPrivateFileBytes(ctx context.Context, param UploadFileBytesParam) error {
+	_, err := m.client.PutObject(ctx,
 		m.bucket,
 		param.FilePath,
-		reader,
+		bytes.NewReader(param.FileBytes),
 		int64(len(param.FileBytes)),
 		miniogo.PutObjectOptions{
 			ContentType:  param.FileMimeType,
@@ -272,7 +279,12 @@ func (m *minio) UploadFileBytes(ctx context.Context, param *UploadFileBytesParam
 			UserMetadata: map[string]string{MinIOHeaderUserUID: param.UserUID.String()},
 		},
 	)
-	if err != nil {
+
+	return err
+}
+
+func (m *minio) UploadFileBytes(ctx context.Context, param *UploadFileBytesParam) (url string, objectInfo *miniogo.ObjectInfo, err error) {
+	if err := m.UploadPrivateFileBytes(ctx, *param); err != nil {
 		return "", nil, fmt.Errorf("putting object in MinIO: %w", err)
 	}
 
