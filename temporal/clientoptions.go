@@ -5,9 +5,16 @@ import (
 	"crypto/x509"
 	"fmt"
 	"os"
+	"strings"
+	"time"
 
+	"github.com/uber-go/tally/v4"
+	"github.com/uber-go/tally/v4/prometheus"
 	"go.temporal.io/sdk/client"
 	"go.uber.org/zap"
+
+	prom "github.com/prometheus/client_golang/prometheus"
+	sdktally "go.temporal.io/sdk/contrib/tally"
 
 	"github.com/instill-ai/x/zapadapter"
 )
@@ -18,8 +25,10 @@ type ClientConfig struct {
 	Namespace string `koanf:"namespace"`
 	Retention string `koanf:"retention"`
 
+	MetricsPort int `koanf:"metricsport"` // Listener address for the Temporal metrics to be scraped
+
 	// Secure communication config.
-	ServerName   string `koanf:"servername"`   // Server name to use for verifying the server certificate
+	ServerName   string `koanf:"servername"`   // Server name to use for verifying the server certificate and as metrics prefix
 	ServerRootCA string `koanf:"serverrootca"` // Path to the server root CA certificate
 	ClientCert   string `koanf:"clientcert"`   // Path to the client certificate
 	ClientKey    string `koanf:"clientkey"`    // Path to the client
@@ -51,6 +60,17 @@ func ClientOptions(cfg ClientConfig, log *zap.Logger) (client.Options, error) {
 		opts.ConnectionOptions = connOpts
 	}
 
+	if cfg.MetricsPort != 0 {
+		ps, err := newPrometheusScope(prometheus.Configuration{
+			ListenAddress: fmt.Sprintf("0.0.0.0:%d", cfg.MetricsPort),
+			TimerType:     "histogram",
+		}, cfg.Namespace, log)
+		if err != nil {
+			return opts, fmt.Errorf("creating Prometheus metrics scope: %w", err)
+		}
+
+		opts.MetricsHandler = sdktally.NewMetricsHandler(ps)
+	}
 
 	return opts, nil
 }
@@ -82,4 +102,35 @@ func getTLSConnOptions(cfg ClientConfig) (opts client.ConnectionOptions, err err
 	}
 
 	return opts, nil
+}
+
+func newPrometheusScope(c prometheus.Configuration, prefix string, log *zap.Logger) (tally.Scope, error) {
+	reporter, err := c.NewReporter(
+		prometheus.ConfigurationOptions{
+			Registry: prom.NewRegistry(),
+			OnError: func(err error) {
+				log.Error("Error in prometheus reporter", zap.Error(err))
+			},
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("creating prometheus reporter: %w", err)
+	}
+
+	// By convention, metrics will use snake_case.
+	prefix = strings.ReplaceAll(
+		strings.ReplaceAll(strings.TrimSpace(prefix), "-", "_"),
+		" ", "_",
+	)
+	scopeOpts := tally.ScopeOptions{
+		CachedReporter:  reporter,
+		Separator:       prometheus.DefaultSeparator,
+		SanitizeOptions: &sdktally.PrometheusSanitizeOptions,
+		Prefix:          prefix,
+	}
+	scope, _ := tally.NewRootScope(scopeOpts, time.Second)
+	scope = sdktally.NewPrometheusNamingScope(scope)
+
+	log.Info("Prometheus metrics scope created", zap.String("prefix", prefix))
+	return scope, nil
 }
