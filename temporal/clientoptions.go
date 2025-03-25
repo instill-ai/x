@@ -5,7 +5,6 @@ import (
 	"crypto/x509"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/uber-go/tally/v4"
@@ -64,7 +63,7 @@ func ClientOptions(cfg ClientConfig, log *zap.Logger) (client.Options, error) {
 		ps, err := newPrometheusScope(prometheus.Configuration{
 			ListenAddress: fmt.Sprintf("0.0.0.0:%d", cfg.MetricsPort),
 			TimerType:     "histogram",
-		}, cfg.Namespace, log)
+		}, log)
 		if err != nil {
 			return opts, fmt.Errorf("creating Prometheus metrics scope: %w", err)
 		}
@@ -104,7 +103,7 @@ func getTLSConnOptions(cfg ClientConfig) (opts client.ConnectionOptions, err err
 	return opts, nil
 }
 
-func newPrometheusScope(c prometheus.Configuration, prefix string, log *zap.Logger) (tally.Scope, error) {
+func newPrometheusScope(c prometheus.Configuration, log *zap.Logger) (tally.Scope, error) {
 	reporter, err := c.NewReporter(
 		prometheus.ConfigurationOptions{
 			Registry: prom.NewRegistry(),
@@ -118,19 +117,15 @@ func newPrometheusScope(c prometheus.Configuration, prefix string, log *zap.Logg
 	}
 
 	// By convention, metrics will use snake_case.
-	prefix = strings.ReplaceAll(
-		strings.ReplaceAll(strings.TrimSpace(prefix), "-", "_"),
-		" ", "_",
-	)
 	scopeOpts := tally.ScopeOptions{
 		CachedReporter:  reporter,
 		Separator:       prometheus.DefaultSeparator,
 		SanitizeOptions: &sdktally.PrometheusSanitizeOptions,
-		Prefix:          prefix,
+		// A prefix can be set here, but metrics are already grouped by namespace.
 	}
 	scope, _ := tally.NewRootScope(scopeOpts, time.Second)
 	scope = sdktally.NewPrometheusNamingScope(scope)
 
-	log.Info("Prometheus metrics scope created", zap.String("prefix", prefix))
+	log.Info("Prometheus metrics scope created")
 	return scope, nil
 }
