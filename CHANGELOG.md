@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0-alpha](https://github.com/instill-ai/x/compare/v0.8.0-alpha...v0.9.0-alpha) (2025-05-22)
+
+
+### Features
+
+* **temporal:** add context propagator ([#47](https://github.com/instill-ai/x/issues/47)) ([9172edd](https://github.com/instill-ai/x/commit/9172edd336bb29ce69be0be124658160b80f58e2))
+
 ## [0.8.0-alpha](https://github.com/instill-ai/x/compare/v0.7.0-alpha...v0.8.0-alpha) (2025-03-25)
 
 
