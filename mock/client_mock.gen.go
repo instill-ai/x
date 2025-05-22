@@ -62,6 +62,13 @@ type ClientMock struct {
 	beforeUploadFileBytesCounter uint64
 	UploadFileBytesMock          mClientMockUploadFileBytes
 
+	funcUploadPrivateFileBytes          func(ctx context.Context, u1 mm_minio.UploadFileBytesParam) (err error)
+	funcUploadPrivateFileBytesOrigin    string
+	inspectFuncUploadPrivateFileBytes   func(ctx context.Context, u1 mm_minio.UploadFileBytesParam)
+	afterUploadPrivateFileBytesCounter  uint64
+	beforeUploadPrivateFileBytesCounter uint64
+	UploadPrivateFileBytesMock          mClientMockUploadPrivateFileBytes
+
 	funcWithLogger          func(lp1 *zap.Logger) (c1 mm_minio.Client)
 	funcWithLoggerOrigin    string
 	inspectFuncWithLogger   func(lp1 *zap.Logger)
@@ -94,6 +101,9 @@ func NewClientMock(t minimock.Tester) *ClientMock {
 
 	m.UploadFileBytesMock = mClientMockUploadFileBytes{mock: m}
 	m.UploadFileBytesMock.callArgs = []*ClientMockUploadFileBytesParams{}
+
+	m.UploadPrivateFileBytesMock = mClientMockUploadPrivateFileBytes{mock: m}
+	m.UploadPrivateFileBytesMock.callArgs = []*ClientMockUploadPrivateFileBytesParams{}
 
 	m.WithLoggerMock = mClientMockWithLogger{mock: m}
 	m.WithLoggerMock.callArgs = []*ClientMockWithLoggerParams{}
@@ -2098,6 +2108,348 @@ func (m *ClientMock) MinimockUploadFileBytesInspect() {
 	}
 }
 
+type mClientMockUploadPrivateFileBytes struct {
+	optional           bool
+	mock               *ClientMock
+	defaultExpectation *ClientMockUploadPrivateFileBytesExpectation
+	expectations       []*ClientMockUploadPrivateFileBytesExpectation
+
+	callArgs []*ClientMockUploadPrivateFileBytesParams
+	mutex    sync.RWMutex
+
+	expectedInvocations       uint64
+	expectedInvocationsOrigin string
+}
+
+// ClientMockUploadPrivateFileBytesExpectation specifies expectation struct of the Client.UploadPrivateFileBytes
+type ClientMockUploadPrivateFileBytesExpectation struct {
+	mock               *ClientMock
+	params             *ClientMockUploadPrivateFileBytesParams
+	paramPtrs          *ClientMockUploadPrivateFileBytesParamPtrs
+	expectationOrigins ClientMockUploadPrivateFileBytesExpectationOrigins
+	results            *ClientMockUploadPrivateFileBytesResults
+	returnOrigin       string
+	Counter            uint64
+}
+
+// ClientMockUploadPrivateFileBytesParams contains parameters of the Client.UploadPrivateFileBytes
+type ClientMockUploadPrivateFileBytesParams struct {
+	ctx context.Context
+	u1  mm_minio.UploadFileBytesParam
+}
+
+// ClientMockUploadPrivateFileBytesParamPtrs contains pointers to parameters of the Client.UploadPrivateFileBytes
+type ClientMockUploadPrivateFileBytesParamPtrs struct {
+	ctx *context.Context
+	u1  *mm_minio.UploadFileBytesParam
+}
+
+// ClientMockUploadPrivateFileBytesResults contains results of the Client.UploadPrivateFileBytes
+type ClientMockUploadPrivateFileBytesResults struct {
+	err error
+}
+
+// ClientMockUploadPrivateFileBytesOrigins contains origins of expectations of the Client.UploadPrivateFileBytes
+type ClientMockUploadPrivateFileBytesExpectationOrigins struct {
+	origin    string
+	originCtx string
+	originU1  string
+}
+
+// Marks this method to be optional. The default behavior of any method with Return() is '1 or more', meaning
+// the test will fail minimock's automatic final call check if the mocked method was not called at least once.
+// Optional() makes method check to work in '0 or more' mode.
+// It is NOT RECOMMENDED to use this option unless you really need it, as default behaviour helps to
+// catch the problems when the expected method call is totally skipped during test run.
+func (mmUploadPrivateFileBytes *mClientMockUploadPrivateFileBytes) Optional() *mClientMockUploadPrivateFileBytes {
+	mmUploadPrivateFileBytes.optional = true
+	return mmUploadPrivateFileBytes
+}
+
+// Expect sets up expected params for Client.UploadPrivateFileBytes
+func (mmUploadPrivateFileBytes *mClientMockUploadPrivateFileBytes) Expect(ctx context.Context, u1 mm_minio.UploadFileBytesParam) *mClientMockUploadPrivateFileBytes {
+	if mmUploadPrivateFileBytes.mock.funcUploadPrivateFileBytes != nil {
+		mmUploadPrivateFileBytes.mock.t.Fatalf("ClientMock.UploadPrivateFileBytes mock is already set by Set")
+	}
+
+	if mmUploadPrivateFileBytes.defaultExpectation == nil {
+		mmUploadPrivateFileBytes.defaultExpectation = &ClientMockUploadPrivateFileBytesExpectation{}
+	}
+
+	if mmUploadPrivateFileBytes.defaultExpectation.paramPtrs != nil {
+		mmUploadPrivateFileBytes.mock.t.Fatalf("ClientMock.UploadPrivateFileBytes mock is already set by ExpectParams functions")
+	}
+
+	mmUploadPrivateFileBytes.defaultExpectation.params = &ClientMockUploadPrivateFileBytesParams{ctx, u1}
+	mmUploadPrivateFileBytes.defaultExpectation.expectationOrigins.origin = minimock.CallerInfo(1)
+	for _, e := range mmUploadPrivateFileBytes.expectations {
+		if minimock.Equal(e.params, mmUploadPrivateFileBytes.defaultExpectation.params) {
+			mmUploadPrivateFileBytes.mock.t.Fatalf("Expectation set by When has same params: %#v", *mmUploadPrivateFileBytes.defaultExpectation.params)
+		}
+	}
+
+	return mmUploadPrivateFileBytes
+}
+
+// ExpectCtxParam1 sets up expected param ctx for Client.UploadPrivateFileBytes
+func (mmUploadPrivateFileBytes *mClientMockUploadPrivateFileBytes) ExpectCtxParam1(ctx context.Context) *mClientMockUploadPrivateFileBytes {
+	if mmUploadPrivateFileBytes.mock.funcUploadPrivateFileBytes != nil {
+		mmUploadPrivateFileBytes.mock.t.Fatalf("ClientMock.UploadPrivateFileBytes mock is already set by Set")
+	}
+
+	if mmUploadPrivateFileBytes.defaultExpectation == nil {
+		mmUploadPrivateFileBytes.defaultExpectation = &ClientMockUploadPrivateFileBytesExpectation{}
+	}
+
+	if mmUploadPrivateFileBytes.defaultExpectation.params != nil {
+		mmUploadPrivateFileBytes.mock.t.Fatalf("ClientMock.UploadPrivateFileBytes mock is already set by Expect")
+	}
+
+	if mmUploadPrivateFileBytes.defaultExpectation.paramPtrs == nil {
+		mmUploadPrivateFileBytes.defaultExpectation.paramPtrs = &ClientMockUploadPrivateFileBytesParamPtrs{}
+	}
+	mmUploadPrivateFileBytes.defaultExpectation.paramPtrs.ctx = &ctx
+	mmUploadPrivateFileBytes.defaultExpectation.expectationOrigins.originCtx = minimock.CallerInfo(1)
+
+	return mmUploadPrivateFileBytes
+}
+
+// ExpectU1Param2 sets up expected param u1 for Client.UploadPrivateFileBytes
+func (mmUploadPrivateFileBytes *mClientMockUploadPrivateFileBytes) ExpectU1Param2(u1 mm_minio.UploadFileBytesParam) *mClientMockUploadPrivateFileBytes {
+	if mmUploadPrivateFileBytes.mock.funcUploadPrivateFileBytes != nil {
+		mmUploadPrivateFileBytes.mock.t.Fatalf("ClientMock.UploadPrivateFileBytes mock is already set by Set")
+	}
+
+	if mmUploadPrivateFileBytes.defaultExpectation == nil {
+		mmUploadPrivateFileBytes.defaultExpectation = &ClientMockUploadPrivateFileBytesExpectation{}
+	}
+
+	if mmUploadPrivateFileBytes.defaultExpectation.params != nil {
+		mmUploadPrivateFileBytes.mock.t.Fatalf("ClientMock.UploadPrivateFileBytes mock is already set by Expect")
+	}
+
+	if mmUploadPrivateFileBytes.defaultExpectation.paramPtrs == nil {
+		mmUploadPrivateFileBytes.defaultExpectation.paramPtrs = &ClientMockUploadPrivateFileBytesParamPtrs{}
+	}
+	mmUploadPrivateFileBytes.defaultExpectation.paramPtrs.u1 = &u1
+	mmUploadPrivateFileBytes.defaultExpectation.expectationOrigins.originU1 = minimock.CallerInfo(1)
+
+	return mmUploadPrivateFileBytes
+}
+
+// Inspect accepts an inspector function that has same arguments as the Client.UploadPrivateFileBytes
+func (mmUploadPrivateFileBytes *mClientMockUploadPrivateFileBytes) Inspect(f func(ctx context.Context, u1 mm_minio.UploadFileBytesParam)) *mClientMockUploadPrivateFileBytes {
+	if mmUploadPrivateFileBytes.mock.inspectFuncUploadPrivateFileBytes != nil {
+		mmUploadPrivateFileBytes.mock.t.Fatalf("Inspect function is already set for ClientMock.UploadPrivateFileBytes")
+	}
+
+	mmUploadPrivateFileBytes.mock.inspectFuncUploadPrivateFileBytes = f
+
+	return mmUploadPrivateFileBytes
+}
+
+// Return sets up results that will be returned by Client.UploadPrivateFileBytes
+func (mmUploadPrivateFileBytes *mClientMockUploadPrivateFileBytes) Return(err error) *ClientMock {
+	if mmUploadPrivateFileBytes.mock.funcUploadPrivateFileBytes != nil {
+		mmUploadPrivateFileBytes.mock.t.Fatalf("ClientMock.UploadPrivateFileBytes mock is already set by Set")
+	}
+
+	if mmUploadPrivateFileBytes.defaultExpectation == nil {
+		mmUploadPrivateFileBytes.defaultExpectation = &ClientMockUploadPrivateFileBytesExpectation{mock: mmUploadPrivateFileBytes.mock}
+	}
+	mmUploadPrivateFileBytes.defaultExpectation.results = &ClientMockUploadPrivateFileBytesResults{err}
+	mmUploadPrivateFileBytes.defaultExpectation.returnOrigin = minimock.CallerInfo(1)
+	return mmUploadPrivateFileBytes.mock
+}
+
+// Set uses given function f to mock the Client.UploadPrivateFileBytes method
+func (mmUploadPrivateFileBytes *mClientMockUploadPrivateFileBytes) Set(f func(ctx context.Context, u1 mm_minio.UploadFileBytesParam) (err error)) *ClientMock {
+	if mmUploadPrivateFileBytes.defaultExpectation != nil {
+		mmUploadPrivateFileBytes.mock.t.Fatalf("Default expectation is already set for the Client.UploadPrivateFileBytes method")
+	}
+
+	if len(mmUploadPrivateFileBytes.expectations) > 0 {
+		mmUploadPrivateFileBytes.mock.t.Fatalf("Some expectations are already set for the Client.UploadPrivateFileBytes method")
+	}
+
+	mmUploadPrivateFileBytes.mock.funcUploadPrivateFileBytes = f
+	mmUploadPrivateFileBytes.mock.funcUploadPrivateFileBytesOrigin = minimock.CallerInfo(1)
+	return mmUploadPrivateFileBytes.mock
+}
+
+// When sets expectation for the Client.UploadPrivateFileBytes which will trigger the result defined by the following
+// Then helper
+func (mmUploadPrivateFileBytes *mClientMockUploadPrivateFileBytes) When(ctx context.Context, u1 mm_minio.UploadFileBytesParam) *ClientMockUploadPrivateFileBytesExpectation {
+	if mmUploadPrivateFileBytes.mock.funcUploadPrivateFileBytes != nil {
+		mmUploadPrivateFileBytes.mock.t.Fatalf("ClientMock.UploadPrivateFileBytes mock is already set by Set")
+	}
+
+	expectation := &ClientMockUploadPrivateFileBytesExpectation{
+		mock:               mmUploadPrivateFileBytes.mock,
+		params:             &ClientMockUploadPrivateFileBytesParams{ctx, u1},
+		expectationOrigins: ClientMockUploadPrivateFileBytesExpectationOrigins{origin: minimock.CallerInfo(1)},
+	}
+	mmUploadPrivateFileBytes.expectations = append(mmUploadPrivateFileBytes.expectations, expectation)
+	return expectation
+}
+
+// Then sets up Client.UploadPrivateFileBytes return parameters for the expectation previously defined by the When method
+func (e *ClientMockUploadPrivateFileBytesExpectation) Then(err error) *ClientMock {
+	e.results = &ClientMockUploadPrivateFileBytesResults{err}
+	return e.mock
+}
+
+// Times sets number of times Client.UploadPrivateFileBytes should be invoked
+func (mmUploadPrivateFileBytes *mClientMockUploadPrivateFileBytes) Times(n uint64) *mClientMockUploadPrivateFileBytes {
+	if n == 0 {
+		mmUploadPrivateFileBytes.mock.t.Fatalf("Times of ClientMock.UploadPrivateFileBytes mock can not be zero")
+	}
+	mm_atomic.StoreUint64(&mmUploadPrivateFileBytes.expectedInvocations, n)
+	mmUploadPrivateFileBytes.expectedInvocationsOrigin = minimock.CallerInfo(1)
+	return mmUploadPrivateFileBytes
+}
+
+func (mmUploadPrivateFileBytes *mClientMockUploadPrivateFileBytes) invocationsDone() bool {
+	if len(mmUploadPrivateFileBytes.expectations) == 0 && mmUploadPrivateFileBytes.defaultExpectation == nil && mmUploadPrivateFileBytes.mock.funcUploadPrivateFileBytes == nil {
+		return true
+	}
+
+	totalInvocations := mm_atomic.LoadUint64(&mmUploadPrivateFileBytes.mock.afterUploadPrivateFileBytesCounter)
+	expectedInvocations := mm_atomic.LoadUint64(&mmUploadPrivateFileBytes.expectedInvocations)
+
+	return totalInvocations > 0 && (expectedInvocations == 0 || expectedInvocations == totalInvocations)
+}
+
+// UploadPrivateFileBytes implements mm_minio.Client
+func (mmUploadPrivateFileBytes *ClientMock) UploadPrivateFileBytes(ctx context.Context, u1 mm_minio.UploadFileBytesParam) (err error) {
+	mm_atomic.AddUint64(&mmUploadPrivateFileBytes.beforeUploadPrivateFileBytesCounter, 1)
+	defer mm_atomic.AddUint64(&mmUploadPrivateFileBytes.afterUploadPrivateFileBytesCounter, 1)
+
+	mmUploadPrivateFileBytes.t.Helper()
+
+	if mmUploadPrivateFileBytes.inspectFuncUploadPrivateFileBytes != nil {
+		mmUploadPrivateFileBytes.inspectFuncUploadPrivateFileBytes(ctx, u1)
+	}
+
+	mm_params := ClientMockUploadPrivateFileBytesParams{ctx, u1}
+
+	// Record call args
+	mmUploadPrivateFileBytes.UploadPrivateFileBytesMock.mutex.Lock()
+	mmUploadPrivateFileBytes.UploadPrivateFileBytesMock.callArgs = append(mmUploadPrivateFileBytes.UploadPrivateFileBytesMock.callArgs, &mm_params)
+	mmUploadPrivateFileBytes.UploadPrivateFileBytesMock.mutex.Unlock()
+
+	for _, e := range mmUploadPrivateFileBytes.UploadPrivateFileBytesMock.expectations {
+		if minimock.Equal(*e.params, mm_params) {
+			mm_atomic.AddUint64(&e.Counter, 1)
+			return e.results.err
+		}
+	}
+
+	if mmUploadPrivateFileBytes.UploadPrivateFileBytesMock.defaultExpectation != nil {
+		mm_atomic.AddUint64(&mmUploadPrivateFileBytes.UploadPrivateFileBytesMock.defaultExpectation.Counter, 1)
+		mm_want := mmUploadPrivateFileBytes.UploadPrivateFileBytesMock.defaultExpectation.params
+		mm_want_ptrs := mmUploadPrivateFileBytes.UploadPrivateFileBytesMock.defaultExpectation.paramPtrs
+
+		mm_got := ClientMockUploadPrivateFileBytesParams{ctx, u1}
+
+		if mm_want_ptrs != nil {
+
+			if mm_want_ptrs.ctx != nil && !minimock.Equal(*mm_want_ptrs.ctx, mm_got.ctx) {
+				mmUploadPrivateFileBytes.t.Errorf("ClientMock.UploadPrivateFileBytes got unexpected parameter ctx, expected at\n%s:\nwant: %#v\n got: %#v%s\n",
+					mmUploadPrivateFileBytes.UploadPrivateFileBytesMock.defaultExpectation.expectationOrigins.originCtx, *mm_want_ptrs.ctx, mm_got.ctx, minimock.Diff(*mm_want_ptrs.ctx, mm_got.ctx))
+			}
+
+			if mm_want_ptrs.u1 != nil && !minimock.Equal(*mm_want_ptrs.u1, mm_got.u1) {
+				mmUploadPrivateFileBytes.t.Errorf("ClientMock.UploadPrivateFileBytes got unexpected parameter u1, expected at\n%s:\nwant: %#v\n got: %#v%s\n",
+					mmUploadPrivateFileBytes.UploadPrivateFileBytesMock.defaultExpectation.expectationOrigins.originU1, *mm_want_ptrs.u1, mm_got.u1, minimock.Diff(*mm_want_ptrs.u1, mm_got.u1))
+			}
+
+		} else if mm_want != nil && !minimock.Equal(*mm_want, mm_got) {
+			mmUploadPrivateFileBytes.t.Errorf("ClientMock.UploadPrivateFileBytes got unexpected parameters, expected at\n%s:\nwant: %#v\n got: %#v%s\n",
+				mmUploadPrivateFileBytes.UploadPrivateFileBytesMock.defaultExpectation.expectationOrigins.origin, *mm_want, mm_got, minimock.Diff(*mm_want, mm_got))
+		}
+
+		mm_results := mmUploadPrivateFileBytes.UploadPrivateFileBytesMock.defaultExpectation.results
+		if mm_results == nil {
+			mmUploadPrivateFileBytes.t.Fatal("No results are set for the ClientMock.UploadPrivateFileBytes")
+		}
+		return (*mm_results).err
+	}
+	if mmUploadPrivateFileBytes.funcUploadPrivateFileBytes != nil {
+		return mmUploadPrivateFileBytes.funcUploadPrivateFileBytes(ctx, u1)
+	}
+	mmUploadPrivateFileBytes.t.Fatalf("Unexpected call to ClientMock.UploadPrivateFileBytes. %v %v", ctx, u1)
+	return
+}
+
+// UploadPrivateFileBytesAfterCounter returns a count of finished ClientMock.UploadPrivateFileBytes invocations
+func (mmUploadPrivateFileBytes *ClientMock) UploadPrivateFileBytesAfterCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmUploadPrivateFileBytes.afterUploadPrivateFileBytesCounter)
+}
+
+// UploadPrivateFileBytesBeforeCounter returns a count of ClientMock.UploadPrivateFileBytes invocations
+func (mmUploadPrivateFileBytes *ClientMock) UploadPrivateFileBytesBeforeCounter() uint64 {
+	return mm_atomic.LoadUint64(&mmUploadPrivateFileBytes.beforeUploadPrivateFileBytesCounter)
+}
+
+// Calls returns a list of arguments used in each call to ClientMock.UploadPrivateFileBytes.
+// The list is in the same order as the calls were made (i.e. recent calls have a higher index)
+func (mmUploadPrivateFileBytes *mClientMockUploadPrivateFileBytes) Calls() []*ClientMockUploadPrivateFileBytesParams {
+	mmUploadPrivateFileBytes.mutex.RLock()
+
+	argCopy := make([]*ClientMockUploadPrivateFileBytesParams, len(mmUploadPrivateFileBytes.callArgs))
+	copy(argCopy, mmUploadPrivateFileBytes.callArgs)
+
+	mmUploadPrivateFileBytes.mutex.RUnlock()
+
+	return argCopy
+}
+
+// MinimockUploadPrivateFileBytesDone returns true if the count of the UploadPrivateFileBytes invocations corresponds
+// the number of defined expectations
+func (m *ClientMock) MinimockUploadPrivateFileBytesDone() bool {
+	if m.UploadPrivateFileBytesMock.optional {
+		// Optional methods provide '0 or more' call count restriction.
+		return true
+	}
+
+	for _, e := range m.UploadPrivateFileBytesMock.expectations {
+		if mm_atomic.LoadUint64(&e.Counter) < 1 {
+			return false
+		}
+	}
+
+	return m.UploadPrivateFileBytesMock.invocationsDone()
+}
+
+// MinimockUploadPrivateFileBytesInspect logs each unmet expectation
+func (m *ClientMock) MinimockUploadPrivateFileBytesInspect() {
+	for _, e := range m.UploadPrivateFileBytesMock.expectations {
+		if mm_atomic.LoadUint64(&e.Counter) < 1 {
+			m.t.Errorf("Expected call to ClientMock.UploadPrivateFileBytes at\n%s with params: %#v", e.expectationOrigins.origin, *e.params)
+		}
+	}
+
+	afterUploadPrivateFileBytesCounter := mm_atomic.LoadUint64(&m.afterUploadPrivateFileBytesCounter)
+	// if default expectation was set then invocations count should be greater than zero
+	if m.UploadPrivateFileBytesMock.defaultExpectation != nil && afterUploadPrivateFileBytesCounter < 1 {
+		if m.UploadPrivateFileBytesMock.defaultExpectation.params == nil {
+			m.t.Errorf("Expected call to ClientMock.UploadPrivateFileBytes at\n%s", m.UploadPrivateFileBytesMock.defaultExpectation.returnOrigin)
+		} else {
+			m.t.Errorf("Expected call to ClientMock.UploadPrivateFileBytes at\n%s with params: %#v", m.UploadPrivateFileBytesMock.defaultExpectation.expectationOrigins.origin, *m.UploadPrivateFileBytesMock.defaultExpectation.params)
+		}
+	}
+	// if func was set then invocations count should be greater than zero
+	if m.funcUploadPrivateFileBytes != nil && afterUploadPrivateFileBytesCounter < 1 {
+		m.t.Errorf("Expected call to ClientMock.UploadPrivateFileBytes at\n%s", m.funcUploadPrivateFileBytesOrigin)
+	}
+
+	if !m.UploadPrivateFileBytesMock.invocationsDone() && afterUploadPrivateFileBytesCounter > 0 {
+		m.t.Errorf("Expected %d calls to ClientMock.UploadPrivateFileBytes at\n%s but found %d calls",
+			mm_atomic.LoadUint64(&m.UploadPrivateFileBytesMock.expectedInvocations), m.UploadPrivateFileBytesMock.expectedInvocationsOrigin, afterUploadPrivateFileBytesCounter)
+	}
+}
+
 type mClientMockWithLogger struct {
 	optional           bool
 	mock               *ClientMock
@@ -2425,6 +2777,8 @@ func (m *ClientMock) MinimockFinish() {
 
 			m.MinimockUploadFileBytesInspect()
 
+			m.MinimockUploadPrivateFileBytesInspect()
+
 			m.MinimockWithLoggerInspect()
 		}
 	})
@@ -2455,5 +2809,6 @@ func (m *ClientMock) minimockDone() bool {
 		m.MinimockGetFilesByPathsDone() &&
 		m.MinimockUploadFileDone() &&
 		m.MinimockUploadFileBytesDone() &&
+		m.MinimockUploadPrivateFileBytesDone() &&
 		m.MinimockWithLoggerDone()
 }
