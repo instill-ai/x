@@ -10,15 +10,18 @@ import (
 	"github.com/instill-ai/x/constant"
 )
 
-// GetRequestSingleHeader get a request header, the header has to be single-value HTTP header
-func GetRequestSingleHeader(ctx context.Context, header string) string {
-	metaHeader := metadata.ValueFromIncomingContext(ctx, strings.ToLower(header))
+// GetRequestSingleHeader gets a request header, assuming the value is a
+// single-value string HTTP header.
+func GetRequestSingleHeader(ctx context.Context, key string) string {
+	metaHeader := metadata.ValueFromIncomingContext(ctx, strings.ToLower(key))
 	if len(metaHeader) != 1 {
 		return ""
 	}
 	return metaHeader[0]
 }
 
+// GetRequesterUIDAndUserUID extracts the requester and user UIDs from the
+// request header.
 func GetRequesterUIDAndUserUID(ctx context.Context) (uuid.UUID, uuid.UUID) {
 	requesterUID := GetRequestSingleHeader(ctx, constant.HeaderRequesterUIDKey)
 	userUID := GetRequestSingleHeader(ctx, constant.HeaderUserUIDKey)
