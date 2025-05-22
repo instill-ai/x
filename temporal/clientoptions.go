@@ -10,6 +10,7 @@ import (
 	"github.com/uber-go/tally/v4"
 	"github.com/uber-go/tally/v4/prometheus"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/workflow"
 	"go.uber.org/zap"
 
 	prom "github.com/prometheus/client_golang/prometheus"
@@ -45,9 +46,10 @@ type ClientConfig struct {
 // configuration.
 func ClientOptions(cfg ClientConfig, log *zap.Logger) (client.Options, error) {
 	opts := client.Options{
-		HostPort:  cfg.HostPort,
-		Namespace: cfg.Namespace,
-		Logger:    zapadapter.NewZapAdapter(log),
+		HostPort:           cfg.HostPort,
+		Namespace:          cfg.Namespace,
+		Logger:             zapadapter.NewZapAdapter(log),
+		ContextPropagators: []workflow.ContextPropagator{NewContextPropagator()},
 	}
 
 	if cfg.ServerRootCA != "" && cfg.ClientCert != "" && cfg.ClientKey != "" {
