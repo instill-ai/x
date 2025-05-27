@@ -155,7 +155,7 @@ func (r *tlsConfigReloader) getClientCertificate(info *tls.CertificateRequestInf
 		return nil, fmt.Errorf("no client certificate available")
 	}
 
-	r.log.Debug("Client certificate retrieved from cache")
+	r.log.Info("Client certificate retrieved from cache")
 	return cert, nil
 }
 
