@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.0-alpha](https://github.com/instill-ai/x/compare/v0.8.0-alpha...v0.9.0-alpha) (2025-06-13)
+
+
+### Features
+
+* **temporal:** add context propagator ([#47](https://github.com/instill-ai/x/issues/47)) ([9172edd](https://github.com/instill-ai/x/commit/9172edd336bb29ce69be0be124658160b80f58e2))
+
+
+### Miscellaneous
+
+* **deps:** bump golang.org/x/net from 0.36.0 to 0.38.0 ([#46](https://github.com/instill-ai/x/issues/46)) ([5f87dc0](https://github.com/instill-ai/x/commit/5f87dc044a82d3e2dadd703f44affa012c2f34c1))
+* **release-please:** update config.json ([#50](https://github.com/instill-ai/x/issues/50)) ([edf022a](https://github.com/instill-ai/x/commit/edf022aae3333f750ffe88f7fd27d1d46783ed5f))
+
 ## [0.8.0-alpha](https://github.com/instill-ai/x/compare/v0.7.0-alpha...v0.8.0-alpha) (2025-03-25)
 
 
