@@ -9,27 +9,22 @@ import (
 
 	"github.com/instill-ai/x/client"
 
-	pb "github.com/instill-ai/protogen-go/pipeline/pipeline/v1beta"
+	mgmtpb "github.com/instill-ai/protogen-go/core/mgmt/v1beta"
+	pipelinepb "github.com/instill-ai/protogen-go/pipeline/pipeline/v1beta"
 )
 
-// NewPipelinePublicClient returns an initialized gRPC client for the Pipeline
-// public API.
-func NewPipelinePublicClient(svc client.ServiceConfig) (
-	pbclient pb.PipelinePublicServiceClient,
-	closeFn func() error,
-	err error,
-) {
+func newConn(hostport string, https client.HTTPSConfig) (conn *grpc.ClientConn, err error) {
 	credDialOpt := grpc.WithTransportCredentials(insecure.NewCredentials())
-	if svc.HTTPS.Cert != "" && svc.HTTPS.Key != "" {
-		creds, err := credentials.NewServerTLSFromFile(svc.HTTPS.Cert, svc.HTTPS.Key)
+	if https.Cert != "" && https.Key != "" {
+		creds, err := credentials.NewServerTLSFromFile(https.Cert, https.Key)
 		if err != nil {
-			return nil, nil, fmt.Errorf("creating TLS credentials: %w", err)
+			return nil, fmt.Errorf("creating TLS credentials: %w", err)
 		}
 		credDialOpt = grpc.WithTransportCredentials(creds)
 	}
 
-	conn, err := grpc.NewClient(
-		fmt.Sprintf("%v:%v", svc.Host, svc.PublicPort),
+	conn, err = grpc.NewClient(
+		hostport,
 		credDialOpt,
 		grpc.WithUnaryInterceptor(MetadataPropagatorInterceptor),
 		grpc.WithDefaultCallOptions(
@@ -38,8 +33,30 @@ func NewPipelinePublicClient(svc client.ServiceConfig) (
 		),
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("creating client connection: %w", err)
+		return nil, fmt.Errorf("creating client connection: %w", err)
 	}
 
-	return pb.NewPipelinePublicServiceClient(conn), conn.Close, nil
+	return conn, nil
+}
+
+// NewPipelinePublicClient returns an initialized gRPC client for the Pipeline
+// public API.
+func NewPipelinePublicClient(svc client.ServiceConfig) (pbclient pipelinepb.PipelinePublicServiceClient, closeFn func() error, err error) {
+	conn, err := newConn(fmt.Sprintf("%v:%v", svc.Host, svc.PublicPort), svc.HTTPS)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return pipelinepb.NewPipelinePublicServiceClient(conn), conn.Close, nil
+}
+
+// NewMGMTPrivateClient returns an initialized gRPC client for the MGMT private
+// API.
+func NewMGMTPrivateClient(svc client.ServiceConfig) (pbclient mgmtpb.MgmtPrivateServiceClient, closeFn func() error, err error) {
+	conn, err := newConn(fmt.Sprintf("%v:%v", svc.Host, svc.PrivatePort), svc.HTTPS)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return mgmtpb.NewMgmtPrivateServiceClient(conn), conn.Close, nil
 }
