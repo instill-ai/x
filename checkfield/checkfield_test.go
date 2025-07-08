@@ -357,7 +357,7 @@ func TestCheckResourceID_InvalidShort(t *testing.T) {
 	// 0-charactor string
 	tooShort := ""
 	err := checkfield.CheckResourceID(tooShort)
-	require.EqualError(t, err, "the ID must start with a lowercase letter or underscore, followed by zero to 31 occurrences of lowercase letters, numbers, hyphens, or underscores.")
+	require.EqualError(t, err, "the ID must start with a lowercase letter or underscore, followed by zero to 31 occurrences of lowercase letters, numbers, hyphens, or underscores")
 }
 
 func TestCheckResourceID_InvalidLong(t *testing.T) {
@@ -365,7 +365,7 @@ func TestCheckResourceID_InvalidLong(t *testing.T) {
 	// 64-charactor string
 	tooLong := "abcdefghijklmnopqrstuvwxyz-ABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789"
 	err := checkfield.CheckResourceID(tooLong)
-	require.EqualError(t, err, "the ID must start with a lowercase letter or underscore, followed by zero to 31 occurrences of lowercase letters, numbers, hyphens, or underscores.")
+	require.EqualError(t, err, "the ID must start with a lowercase letter or underscore, followed by zero to 31 occurrences of lowercase letters, numbers, hyphens, or underscores")
 }
 
 func TestCheckResourceID_InvalidUUID(t *testing.T) {
@@ -377,5 +377,5 @@ func TestCheckResourceID_InvalidUUID(t *testing.T) {
 func TestCheckResourceID_Invalid(t *testing.T) {
 	a := "local[user"
 	err := checkfield.CheckResourceID(a)
-	require.EqualError(t, err, "the ID must start with a lowercase letter or underscore, followed by zero to 31 occurrences of lowercase letters, numbers, hyphens, or underscores.")
+	require.EqualError(t, err, "the ID must start with a lowercase letter or underscore, followed by zero to 31 occurrences of lowercase letters, numbers, hyphens, or underscores")
 }

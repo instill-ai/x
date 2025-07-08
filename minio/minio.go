@@ -126,7 +126,12 @@ func (fg *FileGetter) GetFile(ctx context.Context, p GetFileParams) (data []byte
 	if err != nil {
 		return nil, "", fmt.Errorf("fetching object: %w", err)
 	}
-	defer object.Close()
+	defer func() {
+		err := object.Close()
+		if err != nil {
+			fg.logger.Error("failed to close object", zap.Error(err))
+		}
+	}()
 
 	info, err := object.Stat()
 	if err != nil {
@@ -333,7 +338,7 @@ func (m *minio) DeleteFile(ctx context.Context, userUID uuid.UUID, filePath stri
 
 	err = m.client.RemoveObject(ctx, m.bucket, filePath, miniogo.RemoveObjectOptions{})
 	if err != nil {
-		log.Error("Failed to delete file from MinIO", zap.Error(err))
+		log.Error("failed to delete file from MinIO", zap.Error(err))
 		return fmt.Errorf("removing object in MinIO: %w", err)
 	}
 
@@ -346,7 +351,12 @@ func (m *minio) GetFile(ctx context.Context, userUID uuid.UUID, filePath string)
 	if err != nil {
 		return nil, fmt.Errorf("getting object from MinIO: %w", err)
 	}
-	defer object.Close()
+	defer func() {
+		err := object.Close()
+		if err != nil {
+			m.logger.Error("failed to close object", zap.Error(err))
+		}
+	}()
 
 	// Read the object's content
 	buf := new(bytes.Buffer)

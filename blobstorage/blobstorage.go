@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+// UploadFile uploads a file to a given URL.
 func UploadFile(ctx context.Context, logger *zap.Logger, uploadURL string, data []byte, contentType string) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, nil)
@@ -39,13 +40,18 @@ func UploadFile(ctx context.Context, logger *zap.Logger, uploadURL string, data 
 	if err != nil {
 		return fmt.Errorf("uploading blob: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		err := resp.Body.Close()
+		if err != nil {
+			logger.Error("Failed to close response body", zap.Error(err))
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		err := fmt.Errorf("failed to upload file")
 		logger.Error("Failed to upload file to MinIO",
-			zap.Binary("body", body),
+			zap.String("body", string(body)),
 			zap.Int("status", resp.StatusCode),
 			zap.String("Uploading URL", uploadURL),
 			zap.Error(err),

@@ -16,7 +16,7 @@ import (
 	prom "github.com/prometheus/client_golang/prometheus"
 	sdktally "go.temporal.io/sdk/contrib/tally"
 
-	"github.com/instill-ai/x/zapadapter"
+	logx "github.com/instill-ai/x/log"
 )
 
 // ClientConfig contains the configuration parameters for a Temporal client.
@@ -48,7 +48,7 @@ func ClientOptions(cfg ClientConfig, log *zap.Logger) (client.Options, error) {
 	opts := client.Options{
 		HostPort:           cfg.HostPort,
 		Namespace:          cfg.Namespace,
-		Logger:             zapadapter.NewZapAdapter(log),
+		Logger:             logx.NewZapAdapter(log),
 		ContextPropagators: []workflow.ContextPropagator{NewContextPropagator()},
 	}
 

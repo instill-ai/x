@@ -17,7 +17,7 @@ func DecodeToken(encodedToken string) (time.Time, string, error) {
 
 	arrStr := strings.Split(string(byt), ",")
 	if len(arrStr) != 2 {
-		err = errors.New("Token is invalid")
+		err = errors.New("token is invalid")
 		return time.Time{}, "", err
 	}
 

@@ -1,4 +1,4 @@
-package zapadapter
+package log
 
 import (
 	"fmt"
@@ -7,10 +7,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// ZapAdapter is a wrapper around a zap logger that implements the log.Logger interface.
 type ZapAdapter struct {
 	zl *zap.Logger
 }
 
+// NewZapAdapter creates a new ZapAdapter with the given zap logger.
 func NewZapAdapter(zapLogger *zap.Logger) *ZapAdapter {
 	return &ZapAdapter{
 		// Skip one call frame to exclude zap_adapter itself.
@@ -19,7 +21,7 @@ func NewZapAdapter(zapLogger *zap.Logger) *ZapAdapter {
 	}
 }
 
-func (log *ZapAdapter) fields(keyvals []interface{}) []zap.Field {
+func (log *ZapAdapter) fields(keyvals []any) []zap.Field {
 	if len(keyvals)%2 != 0 {
 		return []zap.Field{zap.Error(fmt.Errorf("odd number of keyvals pairs: %v", keyvals))}
 	}
@@ -36,22 +38,27 @@ func (log *ZapAdapter) fields(keyvals []interface{}) []zap.Field {
 	return fields
 }
 
-func (log *ZapAdapter) Debug(msg string, keyvals ...interface{}) {
+// Debug logs a debug message with the given keyvals.
+func (log *ZapAdapter) Debug(msg string, keyvals ...any) {
 	log.zl.Debug(msg, log.fields(keyvals)...)
 }
 
-func (log *ZapAdapter) Info(msg string, keyvals ...interface{}) {
+// Info logs an info message with the given keyvals.
+func (log *ZapAdapter) Info(msg string, keyvals ...any) {
 	log.zl.Info(msg, log.fields(keyvals)...)
 }
 
-func (log *ZapAdapter) Warn(msg string, keyvals ...interface{}) {
+// Warn logs a warning message with the given keyvals.
+func (log *ZapAdapter) Warn(msg string, keyvals ...any) {
 	log.zl.Warn(msg, log.fields(keyvals)...)
 }
 
-func (log *ZapAdapter) Error(msg string, keyvals ...interface{}) {
+// Error logs an error message with the given keyvals.
+func (log *ZapAdapter) Error(msg string, keyvals ...any) {
 	log.zl.Error(msg, log.fields(keyvals)...)
 }
 
-func (log *ZapAdapter) With(keyvals ...interface{}) log.Logger {
+// With returns a copy of the logger with the given keyvals added.
+func (log *ZapAdapter) With(keyvals ...any) log.Logger {
 	return &ZapAdapter{zl: log.zl.With(log.fields(keyvals)...)}
 }
