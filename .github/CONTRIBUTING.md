@@ -6,7 +6,6 @@ Hello! Thanks for your interest in contributing to the codebase.
 
 TBD
 
-
 ## Submitting a pull request
 
 To make an efficient review process, we very much appreciate if the PR commits

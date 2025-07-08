@@ -17,7 +17,6 @@ const (
 	// accepted values are the string values of
 	// github.com/instill-ai/protogen-go/common/run/v1alpha.RunSource.
 	HeaderUserAgentKey = "Instill-User-Agent"
-
 	// ContentTypeJSON is the value for the JSON content type.
 	ContentTypeJSON = "application/json"
 )
