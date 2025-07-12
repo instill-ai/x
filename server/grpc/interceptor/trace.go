@@ -3,7 +3,6 @@ package interceptor
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -26,11 +25,10 @@ func TracingUnaryServerInterceptor(serviceName string, serviceVersion string, OT
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		startTime := time.Now()
 
-		// Call the handler first
 		resp, err := handler(ctx, req)
 
 		// Only log if the decider allows it
-		if decideLogGRPCRequest(info.FullMethod, err) {
+		if ShouldLogFromContext(ctx) {
 			duration := time.Since(startTime)
 			code := errorsx.ConvertGRPCCode(err)
 			logGRPCRequest(
@@ -52,11 +50,10 @@ func TracingStreamServerInterceptor(serviceName string, serviceVersion string, O
 	return func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		startTime := time.Now()
 
-		// Call the handler first
 		err := handler(srv, stream)
 
 		// Only log if the decider allows it
-		if decideLogGRPCRequest(info.FullMethod, err) {
+		if ShouldLogFromContext(stream.Context()) {
 			duration := time.Since(startTime)
 			code := errorsx.ConvertGRPCCode(err)
 			logGRPCRequest(
@@ -71,19 +68,6 @@ func TracingStreamServerInterceptor(serviceName string, serviceVersion string, O
 
 		return err
 	}
-}
-
-// decideLogGRPCRequest determines if a gRPC request should be logged based on the full method name
-func decideLogGRPCRequest(fullMethod string, err error) bool {
-	if err == nil {
-		if match, _ := regexp.MatchString("model.model.v1alpha.ModelPublicService/.*ness$", fullMethod); match {
-			return false
-		} else if match, _ := regexp.MatchString("model.model.v1alpha.ModelPrivateService/.*Admin$", fullMethod); match {
-			return false
-		}
-	}
-	// by default everything will be logged
-	return true
 }
 
 // gRPCRequestLogOptions contains all the options for logging a gRPC request
@@ -181,12 +165,10 @@ func logGRPCRequest(opts ...gRPCRequestLogOption) {
 		logFunc = logger.Info
 	}
 
-	// The suffix (trace_id: %s) is added to the message for Grafana Loki logs back-reference to Tempo traces.
-	msg := fmt.Sprintf("finished %s call %s (trace_id: %s)",
-		options.MethodType,
-		extractMethodName(options.FullMethod),
-		trace.SpanFromContext(options.Context).SpanContext().TraceID().String(),
-	)
+	msg := fmt.Sprintf("finished %s call %s", options.MethodType, extractMethodName(options.FullMethod))
+	if options.OTELCollectorEnable {
+		msg += fmt.Sprintf(" [trace_id: %s]", trace.SpanFromContext(options.Context).SpanContext().TraceID().String())
+	}
 
 	logFunc(msg)
 

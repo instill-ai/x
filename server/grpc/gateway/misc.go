@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -68,7 +69,7 @@ func ErrorHandler(ctx context.Context, mux *runtime.ServeMux, marshaler runtime.
 		w.Header().Set("WWW-Authenticate", s.Message())
 	}
 
-	_, err = marshaler.Marshal(pb)
+	buf, err := marshaler.Marshal(pb)
 	if err != nil {
 		logger.Error(fmt.Sprintf("Failed to marshal error message %q: %v", s, err))
 		w.WriteHeader(http.StatusInternalServerError)
@@ -115,6 +116,45 @@ func ErrorHandler(ctx context.Context, mux *runtime.ServeMux, marshaler runtime.
 			}
 		}
 	}
+
+	var httpStatus int
+	switch {
+	case s.Code() == codes.FailedPrecondition:
+		if len(s.Details()) > 0 {
+			switch v := s.Details()[0].(type) {
+			case *errdetails.PreconditionFailure:
+				if len(v.Violations) > 0 {
+					switch v.Violations[0].Type {
+					case "UPDATE", "DELETE", "STATE", "RENAME", "TRIGGER":
+						httpStatus = http.StatusUnprocessableEntity
+					default:
+						httpStatus = http.StatusBadRequest
+					}
+				} else {
+					httpStatus = http.StatusBadRequest
+				}
+			}
+		} else {
+			httpStatus = http.StatusBadRequest
+		}
+	default:
+		httpStatus = runtime.HTTPStatusFromCode(s.Code())
+	}
+
+	w.WriteHeader(httpStatus)
+	if _, err := w.Write(buf); err != nil {
+		logger.Error(fmt.Sprintf("Failed to write response: %v", err))
+	}
+
+	if doForwardTrailers {
+		for k, vs := range md.TrailerMD {
+			tKey := fmt.Sprintf("%s%s", runtime.MetadataTrailerPrefix, k)
+			for _, v := range vs {
+				w.Header().Add(tKey, v)
+			}
+		}
+	}
+
 }
 
 // CustomHeaderMatcher is a callback function for gRPC-Gateway runtime.WithIncomingHeaderMatcher
