@@ -76,7 +76,7 @@ func GetZapLogger(ctx context.Context) (*zap.Logger, error) {
 		}
 	})
 
-	// Construct the logger with the configured core and add hooks
+	// Add a hook that records logs as span events (if span is recording)
 	logger := zap.New(core).WithOptions(
 		zap.Hooks(func(entry zapcore.Entry) error {
 			span := trace.SpanFromContext(ctx)
@@ -84,23 +84,15 @@ func GetZapLogger(ctx context.Context) (*zap.Logger, error) {
 				return nil
 			}
 
-			// Add log entry as an event to the current span
 			span.AddEvent("log", trace.WithAttributes(
-				attribute.KeyValue{
-					Key:   "log.severity",
-					Value: attribute.StringValue(entry.Level.String()),
-				},
-				attribute.KeyValue{
-					Key:   "log.message",
-					Value: attribute.StringValue(entry.Message),
-				},
+				attribute.String("log.severity", entry.Level.String()),
+				attribute.String("log.message", entry.Message),
 			))
 
-			// Set span status based on log level
 			if entry.Level >= zap.ErrorLevel {
 				span.SetStatus(codes.Error, entry.Message)
 			} else {
-				span.SetStatus(codes.Ok, "")
+				span.SetStatus(codes.Ok, entry.Message)
 			}
 
 			return nil
@@ -117,27 +109,36 @@ func getJSONEncoderConfig(development bool) zapcore.EncoderConfig {
 	encoderConfig := zap.NewProductionEncoderConfig()
 	if development {
 		encoderConfig = zap.NewDevelopmentEncoderConfig()
+		encoderConfig.EncodeCaller = zapcore.FullCallerEncoder
 	}
 	encoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
 	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 	return encoderConfig
 }
 
+// ColoredJSONEncoder is a wrapper around a zapcore.Encoder that adds color to the JSON output.
 type ColoredJSONEncoder struct {
 	zapcore.Encoder
 }
 
+// NewColoredJSONEncoder creates a new ColoredJSONEncoder with the given encoder.
 func NewColoredJSONEncoder(encoder zapcore.Encoder) zapcore.Encoder {
 	return &ColoredJSONEncoder{Encoder: encoder}
 }
 
+// Clone creates a copy of the ColoredJSONEncoder with the same underlying encoder.
+func (e *ColoredJSONEncoder) Clone() zapcore.Encoder {
+	return &ColoredJSONEncoder{Encoder: e.Encoder.Clone()}
+}
+
+// EncodeEntry encodes an entry and returns a buffer with the colored JSON.
 func (e *ColoredJSONEncoder) EncodeEntry(entry zapcore.Entry, fields []zapcore.Field) (*buffer.Buffer, error) {
 	buf, err := e.Encoder.EncodeEntry(entry, fields)
 	if err != nil {
 		return nil, err
 	}
 
-	var logMap map[string]interface{}
+	var logMap map[string]any
 	err = json.Unmarshal(buf.Bytes(), &logMap)
 	if err != nil {
 		return buf, nil
