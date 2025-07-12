@@ -3,7 +3,6 @@ package interceptor
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -24,13 +23,13 @@ import (
 // TracingUnaryServerInterceptor creates a unary interceptor that includes trace context in logs
 func TracingUnaryServerInterceptor(serviceName string, serviceVersion string, OTELCollectorEnable bool) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+
 		startTime := time.Now()
 
-		// Call the handler first
 		resp, err := handler(ctx, req)
 
 		// Only log if the decider allows it
-		if decideLogGRPCRequest(info.FullMethod, err) {
+		if ShouldLogFromContext(ctx) {
 			duration := time.Since(startTime)
 			code := errorsx.ConvertGRPCCode(err)
 			logGRPCRequest(
@@ -39,6 +38,7 @@ func TracingUnaryServerInterceptor(serviceName string, serviceVersion string, OT
 				withMethodInfo("unary", info.FullMethod),
 				withTiming(startTime, duration),
 				withCode(code),
+				withError(err),
 				withOTELEnable(OTELCollectorEnable),
 			)
 		}
@@ -52,11 +52,10 @@ func TracingStreamServerInterceptor(serviceName string, serviceVersion string, O
 	return func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		startTime := time.Now()
 
-		// Call the handler first
 		err := handler(srv, stream)
 
 		// Only log if the decider allows it
-		if decideLogGRPCRequest(info.FullMethod, err) {
+		if ShouldLogFromContext(stream.Context()) {
 			duration := time.Since(startTime)
 			code := errorsx.ConvertGRPCCode(err)
 			logGRPCRequest(
@@ -65,25 +64,13 @@ func TracingStreamServerInterceptor(serviceName string, serviceVersion string, O
 				withMethodInfo("stream", info.FullMethod),
 				withTiming(startTime, duration),
 				withCode(code),
+				withError(err),
 				withOTELEnable(OTELCollectorEnable),
 			)
 		}
 
 		return err
 	}
-}
-
-// decideLogGRPCRequest determines if a gRPC request should be logged based on the full method name
-func decideLogGRPCRequest(fullMethod string, err error) bool {
-	if err == nil {
-		if match, _ := regexp.MatchString("model.model.v1alpha.ModelPublicService/.*ness$", fullMethod); match {
-			return false
-		} else if match, _ := regexp.MatchString("model.model.v1alpha.ModelPrivateService/.*Admin$", fullMethod); match {
-			return false
-		}
-	}
-	// by default everything will be logged
-	return true
 }
 
 // gRPCRequestLogOptions contains all the options for logging a gRPC request
@@ -96,6 +83,7 @@ type gRPCRequestLogOptions struct {
 	StartTime           time.Time
 	Duration            time.Duration
 	Code                codes.Code
+	Error               error
 	OTELCollectorEnable bool
 }
 
@@ -140,6 +128,13 @@ func withCode(code codes.Code) gRPCRequestLogOption {
 	}
 }
 
+// withError sets the error for the log request
+func withError(err error) gRPCRequestLogOption {
+	return func(opts *gRPCRequestLogOptions) {
+		opts.Error = err
+	}
+}
+
 // withOTELEnable sets the OpenTelemetry enable flag
 func withOTELEnable(OTELCollectorEnable bool) gRPCRequestLogOption {
 	return func(opts *gRPCRequestLogOptions) {
@@ -151,7 +146,16 @@ func withOTELEnable(OTELCollectorEnable bool) gRPCRequestLogOption {
 func logGRPCRequest(opts ...gRPCRequestLogOption) {
 	// Set default options
 	options := &gRPCRequestLogOptions{
-		Context: context.Background(),
+		Context:             context.Background(),
+		ServiceName:         "grpc-service",
+		ServiceVersion:      "1.0.0",
+		MethodType:          "unary",
+		FullMethod:          "grpc.service.method",
+		StartTime:           time.Now(),
+		Duration:            0,
+		Code:                codes.OK,
+		Error:               nil,
+		OTELCollectorEnable: false,
 	}
 
 	// Apply all options
@@ -181,17 +185,18 @@ func logGRPCRequest(opts ...gRPCRequestLogOption) {
 		logFunc = logger.Info
 	}
 
-	// The suffix (trace_id: %s) is added to the message for Grafana Loki logs back-reference to Tempo traces.
-	msg := fmt.Sprintf("finished %s call %s (trace_id: %s)",
-		options.MethodType,
-		extractMethodName(options.FullMethod),
-		trace.SpanFromContext(options.Context).SpanContext().TraceID().String(),
-	)
+	msg := fmt.Sprintf("finished %s call %s", options.MethodType, extractMethodName(options.FullMethod))
+	if options.Error != nil {
+		msg += fmt.Sprintf(" [error: %v]", options.Error)
+	}
+	if options.OTELCollectorEnable {
+		msg += fmt.Sprintf(" [trace_id: %s]", trace.SpanFromContext(options.Context).SpanContext().TraceID().String())
+	}
 
 	logFunc(msg)
 
 	if options.OTELCollectorEnable {
-		if otelLogger := global.GetLoggerProvider().Logger(options.ServiceName); otelLogger != nil {
+		if otelLogger := global.GetLoggerProvider().Logger(fmt.Sprintf("%s:%s", options.ServiceName, options.ServiceVersion)); otelLogger != nil {
 			record := log.Record{}
 			record.SetTimestamp(options.StartTime)
 			record.SetObservedTimestamp(options.StartTime.Add(options.Duration))
@@ -202,6 +207,9 @@ func logGRPCRequest(opts ...gRPCRequestLogOption) {
 				log.String("method_type", options.MethodType),
 				log.String("full_method", options.FullMethod),
 			)
+			if options.Error != nil {
+				record.AddAttributes(log.String("error_msg", options.Error.Error()))
+			}
 			otelLogger.Emit(options.Context, record)
 		}
 	}
