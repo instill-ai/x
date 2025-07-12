@@ -1,4 +1,4 @@
-package errmsg
+package errors
 
 import (
 	"errors"
