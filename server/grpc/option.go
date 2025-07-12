@@ -17,10 +17,11 @@ import (
 
 // Options contains configuration options for gRPC server setup
 type Options struct {
-	ServiceName         string
-	ServiceVersion      string
-	HTTPSConfig         client.HTTPSConfig
-	OTELCollectorEnable bool
+	ServiceName           string
+	ServiceVersion        string
+	HTTPSConfig           client.HTTPSConfig
+	MethodExcludePatterns []string
+	OTELCollectorEnable   bool
 }
 
 // Option is a function that modifies Options
@@ -54,13 +55,21 @@ func WithServiceVersion(version string) Option {
 	}
 }
 
+// WithMethodExcludePatterns sets the methods to exclude from logging
+func WithMethodExcludePatterns(patterns []string) Option {
+	return func(opts *Options) {
+		opts.MethodExcludePatterns = patterns
+	}
+}
+
 // newGRPCOptions creates a new GRPCOptions with default values and applies the given options
 func newGRPCOptions(options ...Option) *Options {
 	opts := &Options{
-		ServiceName:         "unknown",
-		ServiceVersion:      "unknown",
-		HTTPSConfig:         client.HTTPSConfig{},
-		OTELCollectorEnable: false,
+		ServiceName:           "unknown",
+		ServiceVersion:        "unknown",
+		HTTPSConfig:           client.HTTPSConfig{},
+		MethodExcludePatterns: []string{},
+		OTELCollectorEnable:   false,
 	}
 
 	for _, option := range options {
@@ -77,11 +86,13 @@ func NewGRPCOptionAndCreds(options ...Option) ([]grpc.ServerOption, credentials.
 	grpcServerOpts := []grpc.ServerOption{
 		grpc.StreamInterceptor(grpcmiddleware.ChainStreamServer(
 			interceptor.StreamAppendMetadataInterceptor,
+			interceptor.DeciderStreamServerInterceptor(opts.MethodExcludePatterns),
 			interceptor.TracingStreamServerInterceptor(opts.ServiceName, opts.ServiceVersion, opts.OTELCollectorEnable),
 			grpcrecovery.StreamServerInterceptor(interceptor.RecoveryInterceptorOpt()),
 		)),
 		grpc.UnaryInterceptor(grpcmiddleware.ChainUnaryServer(
 			interceptor.UnaryAppendMetadataAndErrorCodeInterceptor,
+			interceptor.DeciderUnaryServerInterceptor(opts.MethodExcludePatterns),
 			interceptor.TracingUnaryServerInterceptor(opts.ServiceName, opts.ServiceVersion, opts.OTELCollectorEnable),
 			grpcrecovery.UnaryServerInterceptor(interceptor.RecoveryInterceptorOpt()),
 		)),
