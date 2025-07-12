@@ -258,7 +258,7 @@ func TestZapAdapter_ComplexValues(t *testing.T) {
 	adapter := NewZapAdapter(testLogger)
 
 	// Test with complex values
-	complexMap := map[string]interface{}{"nested": "value"}
+	complexMap := map[string]any{"nested": "value"}
 	complexSlice := []string{"item1", "item2"}
 
 	adapter.Info("complex values", "map", complexMap, "slice", complexSlice, "nil", nil)
@@ -268,8 +268,8 @@ func TestZapAdapter_ComplexValues(t *testing.T) {
 
 	fields := logs[0].ContextMap()
 	assert.Equal(t, complexMap, fields["map"])
-	// Convert []interface{} to []string for comparison
-	sliceInterface := fields["slice"].([]interface{})
+	// Convert []any to []string for comparison
+	sliceInterface := fields["slice"].([]any)
 	sliceString := make([]string, len(sliceInterface))
 	for i, v := range sliceInterface {
 		sliceString[i] = v.(string)

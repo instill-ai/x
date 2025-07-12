@@ -14,10 +14,10 @@ import (
 // CheckRequiredFields implements follows https://google.aip.dev/203#required
 // The msg parameter is a Protobuf message instance
 // The requiredFields is a slice of field path with snake_case name
-func CheckRequiredFields(msg interface{}, requiredFields []string) error {
+func CheckRequiredFields(msg any, requiredFields []string) error {
 
-	var recurMsgCheck func(interface{}, []string, string) error
-	recurMsgCheck = func(m interface{}, fieldNames []string, path string) error {
+	var recurMsgCheck func(any, []string, string) error
+	recurMsgCheck = func(m any, fieldNames []string, path string) error {
 
 		if reflect.ValueOf(m).IsZero() {
 			return fmt.Errorf("required field path `%s` is empty", path)
@@ -76,10 +76,10 @@ func CheckRequiredFields(msg interface{}, requiredFields []string) error {
 // CheckCreateOutputOnlyFields implements follows https://google.aip.dev/203#output-only
 // The msg parameter is a Protobuf message instance
 // The outputOnlyFields is a slice of field path with snake_case name
-func CheckCreateOutputOnlyFields(msg interface{}, outputOnlyFields []string) error {
+func CheckCreateOutputOnlyFields(msg any, outputOnlyFields []string) error {
 
-	var recurMsgCheck func(interface{}, []string, string) error
-	recurMsgCheck = func(m interface{}, fieldNames []string, path string) error {
+	var recurMsgCheck func(any, []string, string) error
+	recurMsgCheck = func(m any, fieldNames []string, path string) error {
 
 		if reflect.ValueOf(m).IsZero() {
 			return fmt.Errorf("output-only field path `%s` is empty", path)
@@ -126,10 +126,10 @@ func CheckCreateOutputOnlyFields(msg interface{}, outputOnlyFields []string) err
 // CheckUpdateImmutableFields implements follows https://google.aip.dev/203#immutable
 // The msgReq parameter is a Protobuf message instance requested to update msgUpdate
 // The outputOnlyFields is a slice of field path with snake_case name
-func CheckUpdateImmutableFields(msgReq interface{}, msgUpdate interface{}, immutableFields []string) error {
+func CheckUpdateImmutableFields(msgReq any, msgUpdate any, immutableFields []string) error {
 
-	var recurMsgCheck func(interface{}, interface{}, []string, string) error
-	recurMsgCheck = func(mr interface{}, mu interface{}, fieldNames []string, path string) error {
+	var recurMsgCheck func(any, any, []string, string) error
+	recurMsgCheck = func(mr any, mu any, fieldNames []string, path string) error {
 
 		if reflect.ValueOf(mr).IsZero() {
 			return fmt.Errorf("immutable field path `%s` in request message is empty", path)
