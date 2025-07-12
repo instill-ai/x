@@ -255,7 +255,7 @@ func TestColoredJSONEncoder_EncodeEntry(t *testing.T) {
 			cleanOutput = strings.ReplaceAll(cleanOutput, "\x1b[0m", "")
 
 			// Parse as JSON to ensure it's valid
-			var logEntry map[string]interface{}
+			var logEntry map[string]any
 			err = json.Unmarshal([]byte(cleanOutput), &logEntry)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.message, logEntry["msg"])
