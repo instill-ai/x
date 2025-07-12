@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.9.0-alpha](https://github.com/instill-ai/x/compare/v0.8.0-alpha...v0.9.0-alpha) (2025-07-12)
+
+
+### Features
+
+* **grpcclient:** add Mgmt and Pipeline gRPC clients ([#51](https://github.com/instill-ai/x/issues/51)) ([d3b2816](https://github.com/instill-ai/x/commit/d3b28166753ab5f1858d43ef0912055a3bc49097))
+* **main:** add shared packages ([#53](https://github.com/instill-ai/x/issues/53)) ([1ef1b41](https://github.com/instill-ai/x/commit/1ef1b418b3327c38413bbc591a6c0efa8261d101))
+* **temporal:** add context propagator ([#47](https://github.com/instill-ai/x/issues/47)) ([9172edd](https://github.com/instill-ai/x/commit/9172edd336bb29ce69be0be124658160b80f58e2))
+
+
+### Miscellaneous
+
+* **deps:** bump golang.org/x/net from 0.36.0 to 0.38.0 ([#46](https://github.com/instill-ai/x/issues/46)) ([5f87dc0](https://github.com/instill-ai/x/commit/5f87dc044a82d3e2dadd703f44affa012c2f34c1))
+* **main:** pass lint and remove unused pacakges and files ([#52](https://github.com/instill-ai/x/issues/52)) ([aa51f36](https://github.com/instill-ai/x/commit/aa51f36fb8cfde0ac8e1bef3a8d21634f69acae9))
+* **release-please:** update config.json ([#50](https://github.com/instill-ai/x/issues/50)) ([edf022a](https://github.com/instill-ai/x/commit/edf022aae3333f750ffe88f7fd27d1d46783ed5f))
+* **server:** improve server package ([#54](https://github.com/instill-ai/x/issues/54)) ([d343257](https://github.com/instill-ai/x/commit/d343257e5e5dfea9716789eca70a663f57f4fa4a))
+
 ## [0.8.0-alpha](https://github.com/instill-ai/x/compare/v0.7.0-alpha...v0.8.0-alpha) (2025-03-25)
 
 
