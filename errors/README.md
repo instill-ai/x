@@ -21,6 +21,7 @@ The `x/errors` package provides a comprehensive error handling solution that:
 ### End-User Messages vs Internal Errors
 
 The package distinguishes between:
+
 - **Internal errors**: Technical details for developers and debugging
 - **End-user messages**: Human-readable messages for API consumers
 
@@ -54,6 +55,7 @@ err := fmt.Errorf("step 1: %w",
 ### Core Functions
 
 #### `AddMessage(err error, msg string) error`
+
 Adds an end-user message to an error. If the error already has a message, the new message is prepended.
 
 ```go
@@ -73,6 +75,7 @@ if msg != "" {
 ```
 
 #### `MessageOrErr(err error) string`
+
 Extracts the end-user message, falling back to `err.Error()` if no message exists.
 
 ```go
@@ -85,6 +88,7 @@ userMsg := errors.MessageOrErr(err)
 The package provides predefined errors for common scenarios:
 
 #### Domain Layer (`domain.go`)
+
 ```go
 var (
     ErrInvalidArgument = errors.New("invalid")
@@ -95,6 +99,7 @@ var (
 ```
 
 #### Service Layer (`service.go`)
+
 ```go
 var (
     ErrUnauthenticated = errors.New("unauthenticated")
@@ -105,10 +110,18 @@ var (
         fmt.Errorf("%w: plaintext value in credential field", ErrInvalidArgument),
         "Plaintext values are forbidden in credential fields. You can create a secret and reference it with the syntax ${secret.my-secret}.",
     )
+    ErrInvalidTokenTTL = errors.New("invalid token ttl")
+    ErrInvalidRole = errors.New("invalid role")
+    ErrInvalidOwnerNamespace = errors.New("invalid owner namespace format")
+    ErrStateCanOnlyBeActive = errors.New("state can only be active")
+    ErrCanNotRemoveOwnerFromOrganization = errors.New("can not remove owner from organization")
+    ErrCanNotSetAnotherOwner = errors.New("can not set another user as owner")
+    ErrPasswordNotMatch = errors.New("password not match")
 )
 ```
 
 #### Repository Layer (`repository.go`)
+
 ```go
 var (
     ErrOwnerTypeNotMatch = errors.New("owner type not match")
@@ -122,6 +135,7 @@ func NewPageTokenErr(err error) error {
 ```
 
 #### Handler Layer (`handler.go`)
+
 ```go
 var (
     ErrCheckUpdateImmutableFields = errors.New("update immutable fields error")
@@ -130,10 +144,12 @@ var (
     ErrFieldMask                  = errors.New("field mask error")
     ErrSematicVersion             = errors.New("not a legal version, should be the format vX.Y.Z or vX.Y.Z-identifiers")
     ErrUpdateMask                 = errors.New("update mask error")
+    ErrResourceID                 = errors.New("resource ID error")
 )
 ```
 
 #### ACL Layer (`acl.go`)
+
 ```go
 var ErrMembershipNotFound = errors.New("membership not found")
 ```
@@ -141,6 +157,7 @@ var ErrMembershipNotFound = errors.New("membership not found")
 ### gRPC Integration
 
 #### `ConvertGRPCCode(err error) codes.Code`
+
 Maps domain errors to appropriate gRPC status codes:
 
 ```go
@@ -157,9 +174,29 @@ return grpcErr
 ```
 
 **gRPC Code Mapping:**
+
 - `ErrAlreadyExists` → `codes.AlreadyExists`
 - `ErrNotFound`, `ErrNoDataDeleted`, `ErrNoDataUpdated`, `ErrMembershipNotFound` → `codes.NotFound`
-- `ErrInvalidArgument` and related validation errors → `codes.InvalidArgument`
+- `ErrInvalidArgument` and related validation errors → `codes.InvalidArgument`:
+  - `ErrOwnerTypeNotMatch`
+  - `bcrypt.ErrMismatchedHashAndPassword`
+  - `ErrCheckUpdateImmutableFields`
+  - `ErrCheckOutputOnlyFields`
+  - `ErrCheckRequiredFields`
+  - `ErrExceedMaxBatchSize`
+  - `ErrTriggerFail`
+  - `ErrFieldMask`
+  - `ErrSematicVersion`
+  - `ErrUpdateMask`
+  - `ErrResourceID`
+  - `ErrCanNotRemoveOwnerFromOrganization`
+  - `ErrCanNotSetAnotherOwner`
+  - `ErrInvalidRole`
+  - `ErrInvalidTokenTTL`
+  - `ErrStateCanOnlyBeActive`
+  - `ErrPasswordNotMatch`
+  - `ErrInvalidOwnerNamespace`
+  - `ErrCanNotUsePlaintextSecret`
 - `ErrUnauthorized` → `codes.PermissionDenied`
 - `ErrUnauthenticated` → `codes.Unauthenticated`
 - `ErrRateLimiting` → `codes.ResourceExhausted`
@@ -263,6 +300,54 @@ func (s *Service) CreateUser(ctx context.Context, user *User) error {
     }
 
     return nil
+}
+```
+
+### Authentication and Authorization Error Handling
+
+```go
+func (s *Service) AuthenticateUser(ctx context.Context, credentials *Credentials) (*User, error) {
+    // Check authentication
+    user, err := s.repo.GetUserByEmail(ctx, credentials.Email)
+    if err != nil {
+        return nil, errors.ErrUnauthenticated
+    }
+
+    // Validate password
+    if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(credentials.Password)); err != nil {
+        return nil, errors.ErrPasswordNotMatch
+    }
+
+    // Check role permissions
+    if !user.HasRole(requiredRole) {
+        return nil, errors.ErrInvalidRole
+    }
+
+    return user, nil
+}
+```
+
+### Organization Management Error Handling
+
+```go
+func (s *Service) UpdateOrganizationOwner(ctx context.Context, orgID string, newOwnerID string) error {
+    // Validate owner namespace format
+    if !isValidOwnerNamespace(newOwnerID) {
+        return errors.ErrInvalidOwnerNamespace
+    }
+
+    // Check if trying to remove the only owner
+    if isLastOwner(orgID) {
+        return errors.ErrCanNotRemoveOwnerFromOrganization
+    }
+
+    // Check if trying to set another user as owner when not allowed
+    if !canSetAnotherOwner(ctx, orgID) {
+        return errors.ErrCanNotSetAnotherOwner
+    }
+
+    // Update owner
+    return s.repo.UpdateOrganizationOwner(ctx, orgID, newOwnerID)
 }
 ```
 
