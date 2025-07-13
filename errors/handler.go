@@ -20,4 +20,7 @@ var (
 
 	// ErrUpdateMask is used when the update mask error
 	ErrUpdateMask = errors.New("update mask error")
+
+	// ErrResourceID is used when the resource ID error
+	ErrResourceID = errors.New("resource ID error")
 )

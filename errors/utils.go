@@ -62,7 +62,16 @@ func ConvertGRPCCode(err error) codes.Code {
 		errors.Is(err, ErrTriggerFail),
 		errors.Is(err, ErrFieldMask),
 		errors.Is(err, ErrSematicVersion),
-		errors.Is(err, ErrUpdateMask):
+		errors.Is(err, ErrUpdateMask),
+		errors.Is(err, ErrResourceID),
+		errors.Is(err, ErrCanNotRemoveOwnerFromOrganization),
+		errors.Is(err, ErrCanNotSetAnotherOwner),
+		errors.Is(err, ErrInvalidRole),
+		errors.Is(err, ErrInvalidTokenTTL),
+		errors.Is(err, ErrStateCanOnlyBeActive),
+		errors.Is(err, ErrPasswordNotMatch),
+		errors.Is(err, ErrInvalidOwnerNamespace),
+		errors.Is(err, ErrCanNotUsePlaintextSecret):
 		return codes.InvalidArgument
 	case errors.Is(err, ErrUnauthorized):
 		return codes.PermissionDenied
