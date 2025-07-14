@@ -3,27 +3,35 @@ package interceptor
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/frankban/quicktest"
+	"github.com/gojuno/minimock/v3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	grpc_recovery "github.com/grpc-ecosystem/go-grpc-middleware/recovery"
+
+	mockserver "github.com/instill-ai/x/mock/server"
 )
 
 func TestRecoveryInterceptorOpt(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test that RecoveryInterceptorOpt returns a valid option
 	opt := RecoveryInterceptorOpt()
-	assert.NotNil(t, opt, "RecoveryInterceptorOpt should return a non-nil option")
+	qt.Check(opt, quicktest.Not(quicktest.IsNil))
 
 	// Test that the option can be used to create interceptors
 	unaryInterceptor := grpc_recovery.UnaryServerInterceptor(opt)
-	assert.NotNil(t, unaryInterceptor, "should create unary interceptor with the option")
+	qt.Check(unaryInterceptor, quicktest.Not(quicktest.IsNil))
 }
 
 func TestRecoveryHandler(t *testing.T) {
+	qt := quicktest.New(t)
+
 	tests := []struct {
 		name         string
 		panicValue   any
@@ -69,7 +77,7 @@ func TestRecoveryHandler(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt.Run(tt.name, func(c *quicktest.C) {
 			// Get the recovery option
 			opt := RecoveryInterceptorOpt()
 
@@ -94,19 +102,21 @@ func TestRecoveryHandler(t *testing.T) {
 			resp, err := unaryInterceptor(context.Background(), "test request", info, panicHandler)
 
 			// Verify the response is nil (panic was recovered)
-			assert.Nil(t, resp, tt.description)
+			c.Check(resp, quicktest.IsNil)
 
 			// Verify the error is a gRPC status error
-			assert.Error(t, err, tt.description)
+			c.Check(err, quicktest.Not(quicktest.IsNil))
 			st, ok := status.FromError(err)
-			assert.True(t, ok, tt.description)
-			assert.Equal(t, tt.expectedCode, st.Code(), tt.description)
-			assert.Equal(t, tt.expectedMsg, st.Message(), tt.description)
+			c.Check(ok, quicktest.IsTrue)
+			c.Check(st.Code(), quicktest.Equals, tt.expectedCode)
+			c.Check(st.Message(), quicktest.Equals, tt.expectedMsg)
 		})
 	}
 }
 
 func TestRecoveryInterceptorIntegration(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test that the recovery interceptor works in a real scenario
 	opt := RecoveryInterceptorOpt()
 	unaryInterceptor := grpc_recovery.UnaryServerInterceptor(opt)
@@ -121,8 +131,8 @@ func TestRecoveryInterceptorIntegration(t *testing.T) {
 	}
 
 	resp, err := unaryInterceptor(context.Background(), "test request", info, successHandler)
-	assert.NoError(t, err, "should not error for successful handler")
-	assert.Equal(t, "success", resp, "should return success response")
+	qt.Check(err, quicktest.IsNil)
+	qt.Check(resp, quicktest.Equals, "success")
 
 	// Test handler that returns an error (no panic)
 	errorHandler := func(ctx context.Context, req any) (any, error) {
@@ -130,14 +140,16 @@ func TestRecoveryInterceptorIntegration(t *testing.T) {
 	}
 
 	resp, err = unaryInterceptor(context.Background(), "test request", info, errorHandler)
-	assert.Error(t, err, "should return error from handler")
-	assert.Nil(t, resp, "should return nil response when handler errors")
+	qt.Check(err, quicktest.Not(quicktest.IsNil))
+	qt.Check(resp, quicktest.IsNil)
 	st, ok := status.FromError(err)
-	assert.True(t, ok, "should be a gRPC status error")
-	assert.Equal(t, codes.InvalidArgument, st.Code(), "should preserve original error code")
+	qt.Check(ok, quicktest.IsTrue)
+	qt.Check(st.Code(), quicktest.Equals, codes.InvalidArgument)
 }
 
 func TestRecoveryInterceptorStream(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test stream recovery interceptor
 	opt := RecoveryInterceptorOpt()
 	streamInterceptor := grpc_recovery.StreamServerInterceptor(opt)
@@ -152,20 +164,27 @@ func TestRecoveryInterceptorStream(t *testing.T) {
 	}
 
 	// Create a mock stream
-	mockStream := &MockServerStream{ctx: context.Background()}
+	mc := minimock.NewController(t)
+	mockStream := mockserver.NewServerStreamMock(mc)
+
+	// Add this line to set up the Context expectation
+	ctx := context.Background()
+	mockStream.ContextMock.Expect().Return(ctx)
 
 	// Call the interceptor and expect it to recover
 	err := streamInterceptor(nil, mockStream, info, panicStreamHandler)
 
 	// Verify the error is a gRPC status error
-	assert.Error(t, err, "should return error for panic")
+	qt.Check(err, quicktest.Not(quicktest.IsNil))
 	st, ok := status.FromError(err)
-	assert.True(t, ok, "should be a gRPC status error")
-	assert.Equal(t, codes.Unknown, st.Code(), "should return Unknown code for panic")
-	assert.Equal(t, "panic triggered: stream panic", st.Message(), "should have correct panic message")
+	qt.Check(ok, quicktest.IsTrue)
+	qt.Check(st.Code(), quicktest.Equals, codes.Unknown)
+	qt.Check(st.Message(), quicktest.Equals, "panic triggered: stream panic")
 }
 
 func TestRecoveryInterceptorNilPanic(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test recovery from nil panic
 	opt := RecoveryInterceptorOpt()
 	unaryInterceptor := grpc_recovery.UnaryServerInterceptor(opt)
@@ -180,15 +199,17 @@ func TestRecoveryInterceptorNilPanic(t *testing.T) {
 
 	resp, err := unaryInterceptor(context.Background(), "test request", info, nilPanicHandler)
 
-	assert.Nil(t, resp, "should return nil response for nil panic")
-	assert.Error(t, err, "should return error for nil panic")
+	qt.Check(resp, quicktest.IsNil)
+	qt.Check(err, quicktest.Not(quicktest.IsNil))
 	st, ok := status.FromError(err)
-	assert.True(t, ok, "should be a gRPC status error")
-	assert.Equal(t, codes.Unknown, st.Code(), "should return Unknown code for nil panic")
-	assert.Equal(t, "panic triggered: panic called with nil argument", st.Message(), "should handle nil panic correctly")
+	qt.Check(ok, quicktest.IsTrue)
+	qt.Check(st.Code(), quicktest.Equals, codes.Unknown)
+	qt.Check(st.Message(), quicktest.Equals, "panic triggered: panic called with nil argument")
 }
 
 func TestRecoveryInterceptorComplexPanic(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test recovery from complex panic values
 	opt := RecoveryInterceptorOpt()
 	unaryInterceptor := grpc_recovery.UnaryServerInterceptor(opt)
@@ -207,30 +228,34 @@ func TestRecoveryInterceptorComplexPanic(t *testing.T) {
 
 	resp, err := unaryInterceptor(context.Background(), "test request", info, complexPanicHandler)
 
-	assert.Nil(t, resp, "should return nil response for complex panic")
-	assert.Error(t, err, "should return error for complex panic")
+	qt.Check(resp, quicktest.IsNil)
+	qt.Check(err, quicktest.Not(quicktest.IsNil))
 	st, ok := status.FromError(err)
-	assert.True(t, ok, "should be a gRPC status error")
-	assert.Equal(t, codes.Unknown, st.Code(), "should return Unknown code for complex panic")
+	qt.Check(ok, quicktest.IsTrue)
+	qt.Check(st.Code(), quicktest.Equals, codes.Unknown)
 	// The exact message format may vary depending on how the map is stringified
-	assert.Contains(t, st.Message(), "panic triggered:", "should contain panic prefix")
+	qt.Check(strings.Contains(st.Message(), "panic triggered:"), quicktest.IsTrue)
 }
 
 // Test that the recovery option can be used with both unary and stream interceptors
 func TestRecoveryOptionCompatibility(t *testing.T) {
+	qt := quicktest.New(t)
+
 	opt := RecoveryInterceptorOpt()
 
 	// Test that the option can be used with unary interceptor
 	unaryInterceptor := grpc_recovery.UnaryServerInterceptor(opt)
-	assert.NotNil(t, unaryInterceptor, "should create unary interceptor")
+	qt.Check(unaryInterceptor, quicktest.Not(quicktest.IsNil))
 
 	// Test that the option can be used with stream interceptor
 	streamInterceptor := grpc_recovery.StreamServerInterceptor(opt)
-	assert.NotNil(t, streamInterceptor, "should create stream interceptor")
+	qt.Check(streamInterceptor, quicktest.Not(quicktest.IsNil))
 }
 
 // Test that the recovery handler preserves the panic value in the error message
 func TestRecoveryHandlerPreservesPanicValue(t *testing.T) {
+	qt := quicktest.New(t)
+
 	opt := RecoveryInterceptorOpt()
 	unaryInterceptor := grpc_recovery.UnaryServerInterceptor(opt)
 
@@ -246,10 +271,10 @@ func TestRecoveryHandlerPreservesPanicValue(t *testing.T) {
 
 	resp, err := unaryInterceptor(context.Background(), "test request", info, panicHandler)
 
-	assert.Nil(t, resp, "should return nil response")
-	assert.Error(t, err, "should return error")
+	qt.Check(resp, quicktest.IsNil)
+	qt.Check(err, quicktest.Not(quicktest.IsNil))
 	st, ok := status.FromError(err)
-	assert.True(t, ok, "should be a gRPC status error")
-	assert.Equal(t, codes.Unknown, st.Code(), "should return Unknown code")
-	assert.Equal(t, "panic triggered: custom error message", st.Message(), "should preserve custom error message")
+	qt.Check(ok, quicktest.IsTrue)
+	qt.Check(st.Code(), quicktest.Equals, codes.Unknown)
+	qt.Check(st.Message(), quicktest.Equals, "panic triggered: custom error message")
 }

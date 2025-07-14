@@ -3,9 +3,9 @@ package grpc
 import (
 	"testing"
 
+	"github.com/frankban/quicktest"
+
 	"github.com/instill-ai/x/client"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestNewOptions(t *testing.T) {
@@ -107,13 +107,16 @@ func TestNewOptions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			qt := quicktest.New(t)
 			result := newOptions(tt.options...)
-			assert.Equal(t, tt.expected, result)
+			qt.Check(result, quicktest.CmpEquals(), tt.expected)
 		})
 	}
 }
 
 func TestWithServiceConfig(t *testing.T) {
+	qt := quicktest.New(t)
+
 	config := client.ServiceConfig{
 		Host:        "test.example.com",
 		PublicPort:  9090,
@@ -128,7 +131,7 @@ func TestWithServiceConfig(t *testing.T) {
 	opts := &Options{}
 	option(opts)
 
-	assert.Equal(t, config, opts.ServiceConfig)
+	qt.Assert(opts.ServiceConfig, quicktest.Equals, config)
 }
 
 func TestWithSetOTELClientHandler(t *testing.T) {
@@ -142,51 +145,60 @@ func TestWithSetOTELClientHandler(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			qt := quicktest.New(t)
 			option := WithSetOTELClientHandler(tt.enable)
 			opts := &Options{}
 			option(opts)
 
-			assert.Equal(t, tt.enable, opts.SetOTELClientHandler)
+			qt.Assert(opts.SetOTELClientHandler, quicktest.Equals, tt.enable)
 		})
 	}
 }
 
 func TestNewClientOptionsAndCreds_DefaultOptions(t *testing.T) {
+	qt := quicktest.New(t)
+
 	dialOpts, err := NewClientOptionsAndCreds()
 
-	require.NoError(t, err)
-	assert.NotNil(t, dialOpts)
+	qt.Assert(err, quicktest.IsNil)
+	qt.Assert(dialOpts, quicktest.Not(quicktest.IsNil))
 
 	// Verify that we have the expected number of dial options
 	// This includes interceptors, message size limits, and insecure credentials
-	assert.Greater(t, len(dialOpts), 0)
+	qt.Check(len(dialOpts) > 0, quicktest.IsTrue)
 }
 
 func TestNewClientOptionsAndCreds_WithCustomOptions(t *testing.T) {
+	qt := quicktest.New(t)
+
 	dialOpts, err := NewClientOptionsAndCreds(
 		WithSetOTELClientHandler(true),
 	)
 
-	require.NoError(t, err)
-	assert.NotNil(t, dialOpts)
-	assert.Greater(t, len(dialOpts), 0)
+	qt.Assert(err, quicktest.IsNil)
+	qt.Assert(dialOpts, quicktest.Not(quicktest.IsNil))
+	qt.Check(len(dialOpts) > 0, quicktest.IsTrue)
 }
 
 func TestNewClientOptionsAndCreds_OptionOrdering(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test that options are applied in the correct order
 	dialOpts1, err1 := NewClientOptionsAndCreds()
 
 	dialOpts2, err2 := NewClientOptionsAndCreds()
 
-	require.NoError(t, err1)
-	require.NoError(t, err2)
-	assert.Equal(t, len(dialOpts1), len(dialOpts2))
+	qt.Assert(err1, quicktest.IsNil)
+	qt.Assert(err2, quicktest.IsNil)
+	qt.Check(len(dialOpts1), quicktest.Equals, len(dialOpts2))
 }
 
 func TestNewClientOptionsAndCreds_OTELStatsHandler(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test with OTEL collector disabled (default)
 	dialOpts, err := NewClientOptionsAndCreds()
-	require.NoError(t, err)
+	qt.Assert(err, quicktest.IsNil)
 
 	// Count dial options to verify OTEL stats handler is not added
 	otelStatsHandlerCount := 0
@@ -203,80 +215,91 @@ func TestNewClientOptionsAndCreds_OTELStatsHandler(t *testing.T) {
 	dialOptsWithOTEL, err := NewClientOptionsAndCreds(
 		WithSetOTELClientHandler(true),
 	)
-	require.NoError(t, err)
+	qt.Assert(err, quicktest.IsNil)
 
 	// Should have more options when OTEL is enabled
-	assert.GreaterOrEqual(t, len(dialOptsWithOTEL), len(dialOpts),
-		"OTEL enabled should have same or more dial options")
+	qt.Check(len(dialOptsWithOTEL) >= len(dialOpts), quicktest.IsTrue)
 }
 
 func TestNewClientOptionsAndCreds_DialOptionsStructure(t *testing.T) {
+	qt := quicktest.New(t)
+
 	dialOpts, err := NewClientOptionsAndCreds(
 		WithSetOTELClientHandler(true),
 	)
-	require.NoError(t, err)
+	qt.Assert(err, quicktest.IsNil)
 
 	// Verify we have the expected minimum number of options
 	// This includes: interceptors, message size limits, credentials, and potentially OTEL stats handler
-	assert.GreaterOrEqual(t, len(dialOpts), 3,
-		"Should have at least interceptors and message size options")
+	qt.Check(len(dialOpts) >= 3, quicktest.IsTrue)
 
 	// Verify all options are non-nil
-	for i, opt := range dialOpts {
-		assert.NotNil(t, opt, "Dial option %d should not be nil", i)
+	for _, opt := range dialOpts {
+		qt.Assert(opt, quicktest.Not(quicktest.IsNil))
 	}
 }
 
 func TestNewClientOptionsAndCreds_InterceptorChain(t *testing.T) {
+	qt := quicktest.New(t)
+
 	dialOpts, err := NewClientOptionsAndCreds(
 		WithSetOTELClientHandler(true),
 	)
-	require.NoError(t, err)
+	qt.Assert(err, quicktest.IsNil)
 
 	// Verify that interceptors are included
 	// This is a basic check - in practice you'd want to verify the actual interceptor types
-	assert.GreaterOrEqual(t, len(dialOpts), 2,
-		"Should have at least unary interceptors and message size options")
+	qt.Check(len(dialOpts) >= 2, quicktest.IsTrue)
 }
 
 func TestNewClientOptionsAndCreds_MultipleOptions(t *testing.T) {
+	qt := quicktest.New(t)
+
 	dialOpts, err := NewClientOptionsAndCreds(
 		WithSetOTELClientHandler(true),
 	)
 
-	require.NoError(t, err)
-	assert.NotNil(t, dialOpts)
-	assert.Greater(t, len(dialOpts), 0)
+	qt.Assert(err, quicktest.IsNil)
+	qt.Assert(dialOpts, quicktest.Not(quicktest.IsNil))
+	qt.Check(len(dialOpts) > 0, quicktest.IsTrue)
 }
 
 func TestNewClientOptionsAndCreds_EmptyOptions(t *testing.T) {
+	qt := quicktest.New(t)
+
 	dialOpts, err := NewClientOptionsAndCreds()
-	require.NoError(t, err)
-	assert.NotNil(t, dialOpts)
-	assert.Greater(t, len(dialOpts), 0)
+	qt.Assert(err, quicktest.IsNil)
+	qt.Assert(dialOpts, quicktest.Not(quicktest.IsNil))
+	qt.Check(len(dialOpts) > 0, quicktest.IsTrue)
 }
 
 func TestNewClientOptionsAndCreds_NilOptions(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test with no options (empty variadic arguments)
 	dialOpts, err := NewClientOptionsAndCreds()
-	require.NoError(t, err)
-	assert.NotNil(t, dialOpts)
-	assert.Greater(t, len(dialOpts), 0)
+	qt.Assert(err, quicktest.IsNil)
+	qt.Assert(dialOpts, quicktest.Not(quicktest.IsNil))
+	qt.Check(len(dialOpts) > 0, quicktest.IsTrue)
 }
 
 func TestNewClientOptionsAndCreds_WithNilOptionInSlice(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test with a slice containing nil options
 	var nilOption Option = nil
 	dialOpts, err := NewClientOptionsAndCreds(
 		nilOption, // This should be handled gracefully
 		WithSetOTELClientHandler(true),
 	)
-	require.NoError(t, err)
-	assert.NotNil(t, dialOpts)
-	assert.Greater(t, len(dialOpts), 0)
+	qt.Assert(err, quicktest.IsNil)
+	qt.Assert(dialOpts, quicktest.Not(quicktest.IsNil))
+	qt.Check(len(dialOpts) > 0, quicktest.IsTrue)
 }
 
 func TestNewOptions_WithNilOptions(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test that newOptions handles nil options gracefully
 	var nilOption Option = nil
 	result := newOptions(nilOption)
@@ -286,10 +309,12 @@ func TestNewOptions_WithNilOptions(t *testing.T) {
 		SetOTELClientHandler: false,
 	}
 
-	assert.Equal(t, expected, result)
+	qt.Assert(result, quicktest.CmpEquals(), expected)
 }
 
 func TestNewOptions_WithMixedNilAndValidOptions(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test with a mix of nil and valid options
 	var nilOption Option = nil
 	validOption := WithSetOTELClientHandler(true)
@@ -301,7 +326,7 @@ func TestNewOptions_WithMixedNilAndValidOptions(t *testing.T) {
 		SetOTELClientHandler: true,
 	}
 
-	assert.Equal(t, expected, result)
+	qt.Assert(result, quicktest.CmpEquals(), expected)
 }
 
 func TestClientTypeConstants(t *testing.T) {
@@ -321,8 +346,9 @@ func TestClientTypeConstants(t *testing.T) {
 
 	for name, expectedType := range expectedTypes {
 		t.Run(name, func(t *testing.T) {
-			assert.NotEmpty(t, string(expectedType), "ClientType should not be empty")
-			assert.Equal(t, expectedType, expectedType, "ClientType should equal itself")
+			qt := quicktest.New(t)
+			qt.Check(string(expectedType), quicktest.Not(quicktest.Equals), "")
+			qt.Assert(expectedType, quicktest.Equals, expectedType)
 		})
 	}
 }
