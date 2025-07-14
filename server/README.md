@@ -107,8 +107,8 @@ Controls which gRPC calls should be logged based on method patterns.
 
 ```go
 var DefaultMethodExcludePatterns = []string{
-    "*PublicService/.*ness$",  // Health checks
-    "*PrivateService/.*$",     // Private service calls
+    ".*PublicService/.*ness$",  // Health checks (liveness/readiness)
+    ".*PrivateService/.*$",     // Private service calls
 }
 ```
 
@@ -117,13 +117,19 @@ var DefaultMethodExcludePatterns = []string{
 ```go
 // Custom exclusion patterns
 patterns := []string{
-    "*.Health/*",
-    "*.Metrics/*",
-    "*.Internal/*",
+    ".*Health/.*",
+    ".*Metrics/.*",
+    ".*Internal/.*",
 }
 
 interceptor := interceptor.DeciderUnaryServerInterceptor(patterns)
 ```
+
+**Important:** Method exclusion patterns use Go regex syntax. Use `.*` to match any characters (not `*`). For example:
+
+- `".*PublicService/.*ness$"` - matches any service ending with "PublicService" and methods ending with "ness"
+- `".*Health/.*"` - matches any service containing "Health" and any method
+- `".*Internal/.*"` - matches any service containing "Internal" and any method
 
 #### 2.2.3 Tracing Interceptor (`interceptor/trace.go`)
 
@@ -214,7 +220,13 @@ Creates a unary interceptor that controls logging based on method patterns.
 
 **Parameters:**
 
-- `patterns`: Regex patterns for methods to exclude from logging
+- `patterns`: Regex patterns for methods to exclude from logging. When a method matches any pattern, it will NOT be logged (unless there's an error).
+
+**Behavior:**
+
+- Returns `false` (don't log) when method matches any exclude pattern and no error occurs
+- Returns `true` (do log) when method doesn't match any pattern or when an error occurs
+- Always logs requests that result in errors, regardless of patterns
 
 #### `interceptor.TracingUnaryServerInterceptor(serviceName, serviceVersion string, otelEnable bool) grpc.UnaryServerInterceptor`
 
@@ -336,10 +348,10 @@ log.Printf("TLS enabled: %v", opts != nil)
 opts, err := grpc.NewServerOptionsAndCreds(
     grpc.WithServiceName("api-service"),
     grpc.WithMethodExcludePatterns([]string{
-        "*.Health/*",
-        "*.Metrics/*",
-        "*.Internal/*",
-        "*.Debug/*",
+        ".*Health/.*",
+        ".*Metrics/.*",
+        ".*Internal/.*",
+        ".*Debug/.*",
     }),
 )
 ```
@@ -399,7 +411,7 @@ func main() {
 // Create custom interceptor chain
 unaryInterceptors := grpcmiddleware.ChainUnaryServer(
     interceptor.UnaryAppendMetadataInterceptor,
-    interceptor.DeciderUnaryServerInterceptor([]string{"*.Health/*"}),
+    interceptor.DeciderUnaryServerInterceptor([]string{".*Health/.*"}),
     interceptor.TracingUnaryServerInterceptor("my-service", "v1.0.0", true),
     grpcrecovery.UnaryServerInterceptor(interceptor.RecoveryInterceptorOpt()),
     // Add your custom interceptors here
@@ -407,7 +419,7 @@ unaryInterceptors := grpcmiddleware.ChainUnaryServer(
 
 streamInterceptors := grpcmiddleware.ChainStreamServer(
     interceptor.StreamAppendMetadataInterceptor,
-    interceptor.DeciderStreamServerInterceptor([]string{"*.Health/*"}),
+    interceptor.DeciderStreamServerInterceptor([]string{".*Health/.*"}),
     interceptor.TracingStreamServerInterceptor("my-service", "v1.0.0", true),
     grpcrecovery.StreamServerInterceptor(interceptor.RecoveryInterceptorOpt()),
     // Add your custom interceptors here
@@ -501,11 +513,11 @@ opts, err := grpc.NewServerOptionsAndCreds(
 ```go
 // Recommended exclusion patterns
 patterns := []string{
-    "*.Health/*",           // Health checks
-    "*.Metrics/*",          // Metrics endpoints
-    "*.Internal/*",         // Internal service calls
-    "*.Debug/*",            // Debug endpoints
-    "*PublicService/.*ness$", // Liveness/readiness checks
+    ".*Health/.*",           // Health checks
+    ".*Metrics/.*",          // Metrics endpoints
+    ".*Internal/.*",         // Internal service calls
+    ".*Debug/.*",            // Debug endpoints
+    ".*PublicService/.*ness$", // Liveness/readiness checks
 }
 ```
 

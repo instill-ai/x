@@ -14,9 +14,9 @@ const shouldLogKey contextKey = "shouldLog"
 // DefaultMethodExcludePatterns is always included in the methodExcludePatterns used for matching.
 var DefaultMethodExcludePatterns = []string{
 	// stop logging gRPC calls if it was a call to liveness or readiness and no error was raised
-	"*PublicService/.*ness$",
+	".*PublicService/.*ness$", // Changed from "*PublicService/.*ness$"
 	// stop logging gRPC calls if it was a call to a private function and no error was raised
-	"*PrivateService/.*$",
+	".*PrivateService/.*$", // Changed from "*PrivateService/.*$"
 }
 
 // DeciderUnaryServerInterceptor returns a unary interceptor that sets a shouldLog flag in context based on methodExcludePatterns.
@@ -52,16 +52,16 @@ func (d *deciderServerStream) Context() context.Context {
 	return d.ctx
 }
 
-// decideLogGRPCRequest returns true if the fullMethod matches any of methodExcludePatterns, otherwise false.
+// decideLogGRPCRequest returns false if the fullMethod matches any of methodExcludePatterns, otherwise true.
 func decideLogGRPCRequest(fullMethod string, methodExcludePatterns []string, err error) bool {
 	if err == nil {
 		for _, method := range methodExcludePatterns {
 			if match, _ := regexp.MatchString(method, fullMethod); match {
-				return true
+				return false // Don't log if it matches exclude pattern
 			}
 		}
 	}
-	return true
+	return true // Log by default
 }
 
 // ShouldLogFromContext returns the shouldLog flag from context, defaulting to true if not set
