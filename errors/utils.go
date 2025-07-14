@@ -46,6 +46,7 @@ func ConvertGRPCCode(err error) codes.Code {
 	case errors.Is(err, ErrAlreadyExists):
 		return codes.AlreadyExists
 	case
+		isDuplicateKeyErr(err),
 		errors.Is(err, ErrNotFound),
 		errors.Is(err, ErrNoDataDeleted),
 		errors.Is(err, ErrNoDataUpdated),
