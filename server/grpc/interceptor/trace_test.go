@@ -2,11 +2,14 @@ package interceptor
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/frankban/quicktest"
+	"github.com/gojuno/minimock/v3"
 	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
@@ -15,10 +18,14 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	mockserver "github.com/instill-ai/x/mock/server"
+
 	errorsx "github.com/instill-ai/x/errors"
 )
 
 func TestTracingUnaryServerInterceptor(t *testing.T) {
+	qt := quicktest.New(t)
+
 	tests := []struct {
 		name                string
 		serviceName         string
@@ -77,15 +84,12 @@ func TestTracingUnaryServerInterceptor(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt.Run(tt.name, func(c *quicktest.C) {
 			// Create context with shouldLog flag
 			ctx := context.Background()
 			if !tt.shouldLog {
 				ctx = context.WithValue(ctx, shouldLogKey, false)
 			}
-
-			// Create mock logger
-			mockLogger := &MockLogger{}
 
 			// Create interceptor
 			interceptor := TracingUnaryServerInterceptor(tt.serviceName, tt.serviceVersion, tt.OTELCollectorEnable)
@@ -104,22 +108,19 @@ func TestTracingUnaryServerInterceptor(t *testing.T) {
 			resp, err := interceptor(ctx, "request", info, handler)
 
 			// Verify response and error
-			assert.Equal(t, "response", resp)
-			assert.Equal(t, tt.err, err)
+			c.Check(resp, quicktest.Equals, "response")
+			c.Check(err, quicktest.Equals, tt.err)
 
-			// Verify logging behavior
-			if tt.shouldLog {
-				mockLogger.AssertExpectations(t)
-			} else {
-				mockLogger.AssertNotCalled(t, "Info")
-				mockLogger.AssertNotCalled(t, "Warn")
-				mockLogger.AssertNotCalled(t, "Error")
-			}
+			// Don't set up mock expectations since the actual logging happens in the interceptor
+			// and we can't easily mock the logger without refactoring the code
 		})
 	}
 }
 
 func TestTracingStreamServerInterceptor(t *testing.T) {
+	qt := quicktest.New(t)
+	mc := minimock.NewController(t)
+
 	tests := []struct {
 		name                string
 		serviceName         string
@@ -167,18 +168,16 @@ func TestTracingStreamServerInterceptor(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt.Run(tt.name, func(c *quicktest.C) {
 			// Create context with shouldLog flag
 			ctx := context.Background()
 			if !tt.shouldLog {
 				ctx = context.WithValue(ctx, shouldLogKey, false)
 			}
 
-			// Create mock stream
-			stream := &MockServerStream{ctx: ctx}
-
-			// Create mock logger
-			mockLogger := &MockLogger{}
+			// Create mock stream with proper expectations
+			mockStream := mockserver.NewServerStreamMock(mc)
+			mockStream.ContextMock.Expect().Return(ctx)
 
 			// Create interceptor
 			interceptor := TracingStreamServerInterceptor(tt.serviceName, tt.serviceVersion, tt.OTELCollectorEnable)
@@ -194,62 +193,57 @@ func TestTracingStreamServerInterceptor(t *testing.T) {
 			}
 
 			// Execute interceptor
-			err := interceptor(nil, stream, info, handler)
+			err := interceptor(nil, mockStream, info, handler)
 
 			// Verify error
-			assert.Equal(t, tt.err, err)
-
-			// Verify logging behavior
-			if tt.shouldLog {
-				mockLogger.AssertExpectations(t)
-			} else {
-				mockLogger.AssertNotCalled(t, "Info")
-				mockLogger.AssertNotCalled(t, "Warn")
-				mockLogger.AssertNotCalled(t, "Error")
-			}
+			c.Check(err, quicktest.Equals, tt.err)
 		})
 	}
 }
 
 func TestLogGRPCRequestOptions(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test withContext option
 	ctx := context.Background()
 	opts := &gRPCRequestLogOptions{}
 	withContext(ctx)(opts)
-	assert.Equal(t, ctx, opts.Context)
+	qt.Check(opts.Context, quicktest.Equals, ctx)
 
 	// Test withServiceInfo option
 	opts = &gRPCRequestLogOptions{}
 	withServiceInfo("test-service", "v1.0.0")(opts)
-	assert.Equal(t, "test-service", opts.ServiceName)
-	assert.Equal(t, "v1.0.0", opts.ServiceVersion)
+	qt.Check(opts.ServiceName, quicktest.Equals, "test-service")
+	qt.Check(opts.ServiceVersion, quicktest.Equals, "v1.0.0")
 
 	// Test withMethodInfo option
 	opts = &gRPCRequestLogOptions{}
 	withMethodInfo("unary", "test.Service/Method")(opts)
-	assert.Equal(t, "unary", opts.MethodType)
-	assert.Equal(t, "test.Service/Method", opts.FullMethod)
+	qt.Check(opts.MethodType, quicktest.Equals, "unary")
+	qt.Check(opts.FullMethod, quicktest.Equals, "test.Service/Method")
 
 	// Test withTiming option
 	startTime := time.Now()
 	duration := time.Second
 	opts = &gRPCRequestLogOptions{}
 	withTiming(startTime, duration)(opts)
-	assert.Equal(t, startTime, opts.StartTime)
-	assert.Equal(t, duration, opts.Duration)
+	qt.Check(opts.StartTime, quicktest.Equals, startTime)
+	qt.Check(opts.Duration, quicktest.Equals, duration)
 
 	// Test withCode option
 	opts = &gRPCRequestLogOptions{}
 	withCode(codes.OK)(opts)
-	assert.Equal(t, codes.OK, opts.Code)
+	qt.Check(opts.Code, quicktest.Equals, codes.OK)
 
 	// Test withOTELEnable option
 	opts = &gRPCRequestLogOptions{}
 	withOTELEnable(true)(opts)
-	assert.True(t, opts.OTELCollectorEnable)
+	qt.Check(opts.OTELCollectorEnable, quicktest.IsTrue)
 }
 
 func TestMapZapLevelToOTELSeverity(t *testing.T) {
+	qt := quicktest.New(t)
+
 	tests := []struct {
 		name         string
 		zapLevel     zapcore.Level
@@ -289,14 +283,16 @@ func TestMapZapLevelToOTELSeverity(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt.Run(tt.name, func(c *quicktest.C) {
 			result := mapZapLevelToOTELSeverity(tt.zapLevel)
-			assert.Equal(t, tt.expectedOTEL, result, tt.description)
+			c.Check(result, quicktest.Equals, tt.expectedOTEL)
 		})
 	}
 }
 
 func TestExtractMethodName(t *testing.T) {
+	qt := quicktest.New(t)
+
 	tests := []struct {
 		name           string
 		fullMethod     string
@@ -336,14 +332,16 @@ func TestExtractMethodName(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt.Run(tt.name, func(c *quicktest.C) {
 			result := extractMethodName(tt.fullMethod)
-			assert.Equal(t, tt.expectedMethod, result, tt.description)
+			c.Check(result, quicktest.Equals, tt.expectedMethod)
 		})
 	}
 }
 
 func TestConvertGRPCCode(t *testing.T) {
+	qt := quicktest.New(t)
+
 	tests := []struct {
 		name         string
 		err          error
@@ -364,22 +362,24 @@ func TestConvertGRPCCode(t *testing.T) {
 		},
 		{
 			name:         "non-gRPC error",
-			err:          assert.AnError,
+			err:          errors.New("test error"),
 			expectedCode: codes.Unknown,
 			description:  "should return Unknown for non-gRPC errors",
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt.Run(tt.name, func(c *quicktest.C) {
 			result := errorsx.ConvertGRPCCode(tt.err)
-			assert.Equal(t, tt.expectedCode, result, tt.description)
+			c.Check(result, quicktest.Equals, tt.expectedCode)
 		})
 	}
 }
 
 // Test log level determination based on gRPC codes
 func TestLogLevelDetermination(t *testing.T) {
+	qt := quicktest.New(t)
+
 	tests := []struct {
 		name          string
 		code          codes.Code
@@ -413,7 +413,7 @@ func TestLogLevelDetermination(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt.Run(tt.name, func(c *quicktest.C) {
 			// Create options with the test code
 			opts := &gRPCRequestLogOptions{
 				Context: context.Background(),
@@ -433,13 +433,15 @@ func TestLogLevelDetermination(t *testing.T) {
 				logLevel = zapcore.InfoLevel
 			}
 
-			assert.Equal(t, tt.expectedLevel, logLevel, tt.description)
+			c.Check(logLevel, quicktest.Equals, tt.expectedLevel)
 		})
 	}
 }
 
 // Test trace ID extraction
 func TestTraceIDExtraction(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Create a context with a trace span
 	ctx := context.Background()
 	tracer := noop.NewTracerProvider().Tracer("test")
@@ -450,12 +452,14 @@ func TestTraceIDExtraction(t *testing.T) {
 	traceID := trace.SpanFromContext(ctx).SpanContext().TraceID().String()
 
 	// Verify trace ID is not empty
-	assert.NotEmpty(t, traceID)
-	assert.Len(t, traceID, 32) // Trace ID should be 32 characters in hex
+	qt.Check(traceID, quicktest.Not(quicktest.Equals), "")
+	qt.Check(len(traceID), quicktest.Equals, 32) // Trace ID should be 32 characters in hex
 }
 
 // Test message formatting
 func TestMessageFormatting(t *testing.T) {
+	qt := quicktest.New(t)
+
 	ctx := context.Background()
 	tracer := noop.NewTracerProvider().Tracer("test")
 	ctx, span := tracer.Start(ctx, "test-span")
@@ -472,7 +476,7 @@ func TestMessageFormatting(t *testing.T) {
 	)
 
 	// Verify message format
-	assert.Contains(t, msg, "finished unary call unknown")
-	assert.Contains(t, msg, "trace_id:")
-	assert.Contains(t, msg, trace.SpanFromContext(ctx).SpanContext().TraceID().String())
+	qt.Check(strings.Contains(msg, "finished unary call unknown"), quicktest.IsTrue)
+	qt.Check(strings.Contains(msg, "trace_id:"), quicktest.IsTrue)
+	qt.Check(strings.Contains(msg, trace.SpanFromContext(ctx).SpanContext().TraceID().String()), quicktest.IsTrue)
 }

@@ -5,12 +5,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/frankban/quicktest"
 	"go.opentelemetry.io/otel"
 )
 
 func TestSetupTracing(t *testing.T) {
+	qt := quicktest.New(t)
+
 	tests := []struct {
 		name    string
 		options []Option
@@ -40,36 +41,38 @@ func TestSetupTracing(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt.Run(tt.name, func(c *quicktest.C) {
 			ctx := context.Background()
 
 			provider, err := SetupTracing(ctx, tt.options...)
 
 			if tt.wantErr {
-				assert.Error(t, err)
+				c.Check(err, quicktest.Not(quicktest.IsNil))
 				return
 			}
 
-			require.NoError(t, err)
-			require.NotNil(t, provider)
+			c.Check(err, quicktest.IsNil)
+			c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 			// Verify the provider is set globally
 			globalProvider := otel.GetTracerProvider()
-			assert.Equal(t, provider, globalProvider)
+			c.Check(provider, quicktest.Equals, globalProvider)
 
 			// Test that we can create a tracer
 			tracer := provider.Tracer("test-tracer")
-			assert.NotNil(t, tracer)
+			c.Check(tracer, quicktest.Not(quicktest.IsNil))
 
 			// Cleanup
 			err = provider.Shutdown(ctx)
-			assert.NoError(t, err)
+			c.Check(err, quicktest.IsNil)
 		})
 	}
 }
 
 func TestSetupTracingWithStdoutExporter(t *testing.T) {
-	t.Run("stdout exporter functionality", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("stdout exporter functionality", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		// Use stdout exporter (default when collector is disabled)
@@ -79,31 +82,33 @@ func TestSetupTracingWithStdoutExporter(t *testing.T) {
 			WithCollectorEnable(false), // Explicitly disable collector
 		)
 
-		require.NoError(t, err)
-		require.NotNil(t, provider)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 		// Test tracing functionality
 		tracer := provider.Tracer("test-tracer")
-		assert.NotNil(t, tracer)
+		c.Check(tracer, quicktest.Not(quicktest.IsNil))
 
 		// Create a span
 		ctx, span := tracer.Start(ctx, "test-span")
-		assert.NotNil(t, span)
+		c.Check(span, quicktest.Not(quicktest.IsNil))
 		span.End()
 
 		// Create a child span
 		ctx, childSpan := tracer.Start(ctx, "child-span")
-		assert.NotNil(t, childSpan)
+		c.Check(childSpan, quicktest.Not(quicktest.IsNil))
 		childSpan.End()
 
 		// Cleanup
 		err = provider.Shutdown(ctx)
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupTracingResourceAttributes(t *testing.T) {
-	t.Run("verify resource attributes", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("verify resource attributes", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		serviceName := "test-service"
@@ -114,92 +119,102 @@ func TestSetupTracingResourceAttributes(t *testing.T) {
 			WithServiceVersion(serviceVersion),
 		)
 
-		require.NoError(t, err)
-		require.NotNil(t, provider)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 		// Test that we can create a tracer
 		tracer := provider.Tracer("test-tracer")
-		assert.NotNil(t, tracer)
+		c.Check(tracer, quicktest.Not(quicktest.IsNil))
 
 		// Cleanup
 		err = provider.Shutdown(ctx)
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupTracingMultipleCalls(t *testing.T) {
-	t.Run("multiple setup calls", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("multiple setup calls", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		// First setup
 		provider1, err := SetupTracing(ctx, WithServiceName("service1"))
-		require.NoError(t, err)
-		require.NotNil(t, provider1)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider1, quicktest.Not(quicktest.IsNil))
 
 		// Second setup - should work but might return the same provider due to global state
 		provider2, err := SetupTracing(ctx, WithServiceName("service2"))
-		require.NoError(t, err)
-		require.NotNil(t, provider2)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider2, quicktest.Not(quicktest.IsNil))
 
 		// Cleanup both
 		err = provider1.Shutdown(ctx)
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 
 		err = provider2.Shutdown(ctx)
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupTracingContextCancellation(t *testing.T) {
-	t.Run("context cancellation", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("context cancellation", func(c *quicktest.C) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel() // Cancel immediately
 
 		provider, err := SetupTracing(ctx)
 
 		// Should still work even with cancelled context
-		require.NoError(t, err)
-		require.NotNil(t, provider)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 		// Cleanup
 		err = provider.Shutdown(context.Background())
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupTracingShutdown(t *testing.T) {
-	t.Run("provider shutdown", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("provider shutdown", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		provider, err := SetupTracing(ctx)
-		require.NoError(t, err)
-		require.NotNil(t, provider)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 		// Shutdown the provider
 		err = provider.Shutdown(ctx)
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 
 		// Try to shutdown again - might error due to already shutdown
 		err = provider.Shutdown(ctx)
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupTracingWithContextTODO(t *testing.T) {
-	t.Run("context TODO", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("context TODO", func(c *quicktest.C) {
 		// This should work as context.Background() is used internally
 		provider, err := SetupTracing(context.TODO())
 
-		require.NoError(t, err)
-		require.NotNil(t, provider)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 		// Cleanup
 		err = provider.Shutdown(context.Background())
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupTracingOptionsCombination(t *testing.T) {
+	qt := quicktest.New(t)
+
 	tests := []struct {
 		name    string
 		options []Option
@@ -236,42 +251,44 @@ func TestSetupTracingOptionsCombination(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt.Run(tt.name, func(c *quicktest.C) {
 			ctx := context.Background()
 
 			provider, err := SetupTracing(ctx, tt.options...)
 
 			if tt.wantErr {
-				assert.Error(t, err)
+				c.Check(err, quicktest.Not(quicktest.IsNil))
 				if provider != nil {
 					err = provider.Shutdown(ctx)
-					assert.NoError(t, err)
+					c.Check(err, quicktest.IsNil)
 				}
 				return
 			}
 
-			require.NoError(t, err)
-			require.NotNil(t, provider)
+			c.Check(err, quicktest.IsNil)
+			c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 			// Verify global provider is set
 			globalProvider := otel.GetTracerProvider()
-			assert.Equal(t, provider, globalProvider)
+			c.Check(provider, quicktest.Equals, globalProvider)
 
 			// Cleanup
 			err = provider.Shutdown(ctx)
-			assert.NoError(t, err)
+			c.Check(err, quicktest.IsNil)
 		})
 	}
 }
 
 func TestSetupTracingDefaultValues(t *testing.T) {
-	t.Run("verify default values", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("verify default values", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		// Use no options to get default values
 		provider, err := SetupTracing(ctx)
-		require.NoError(t, err)
-		require.NotNil(t, provider)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 		// The default values should be:
 		// - ServiceName: "unknown"
@@ -282,16 +299,18 @@ func TestSetupTracingDefaultValues(t *testing.T) {
 
 		// We can't easily verify these directly, but we can verify the provider works
 		tracer := provider.Tracer("test-tracer")
-		assert.NotNil(t, tracer)
+		c.Check(tracer, quicktest.Not(quicktest.IsNil))
 
 		// Cleanup
 		err = provider.Shutdown(ctx)
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupTracingErrorHandling(t *testing.T) {
-	t.Run("invalid port number", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("invalid port number", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		// Test with an invalid port that might cause issues
@@ -299,17 +318,19 @@ func TestSetupTracingErrorHandling(t *testing.T) {
 
 		// This might still succeed as the port is only used when collector is enabled
 		if err != nil {
-			assert.Error(t, err)
+			c.Check(err, quicktest.Not(quicktest.IsNil))
 		} else {
-			require.NotNil(t, provider)
+			c.Check(provider, quicktest.Not(quicktest.IsNil))
 			err = provider.Shutdown(ctx)
-			assert.NoError(t, err)
+			c.Check(err, quicktest.IsNil)
 		}
 	})
 }
 
 func TestSetupTracingConcurrentAccess(t *testing.T) {
-	t.Run("concurrent setup calls", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("concurrent setup calls", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		// Test concurrent setup calls
@@ -319,7 +340,7 @@ func TestSetupTracingConcurrentAccess(t *testing.T) {
 			provider, err := SetupTracing(ctx, WithServiceName("concurrent1"))
 			if err == nil && provider != nil {
 				err = provider.Shutdown(ctx)
-				assert.NoError(t, err)
+				c.Check(err, quicktest.IsNil)
 			}
 			done <- true
 		}()
@@ -328,7 +349,7 @@ func TestSetupTracingConcurrentAccess(t *testing.T) {
 			provider, err := SetupTracing(ctx, WithServiceName("concurrent2"))
 			if err == nil && provider != nil {
 				err = provider.Shutdown(ctx)
-				assert.NoError(t, err)
+				c.Check(err, quicktest.IsNil)
 			}
 			done <- true
 		}()
@@ -340,7 +361,9 @@ func TestSetupTracingConcurrentAccess(t *testing.T) {
 }
 
 func TestSetupTracingMemoryLeaks(t *testing.T) {
-	t.Run("memory leak prevention", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("memory leak prevention", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		// Create and destroy multiple providers to check for memory leaks
@@ -350,49 +373,51 @@ func TestSetupTracingMemoryLeaks(t *testing.T) {
 				WithServiceVersion("1.0.0"),
 			)
 
-			require.NoError(t, err)
-			require.NotNil(t, provider)
+			c.Check(err, quicktest.IsNil)
+			c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 			// Create a tracer to ensure it works
 			tracer := provider.Tracer("test-tracer")
-			assert.NotNil(t, tracer)
+			c.Check(tracer, quicktest.Not(quicktest.IsNil))
 
 			// Shutdown immediately
 			err = provider.Shutdown(ctx)
-			assert.NoError(t, err)
+			c.Check(err, quicktest.IsNil)
 		}
 	})
 }
 
 func TestSetupTracingIntegration(t *testing.T) {
-	t.Run("integration test with actual tracing", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("integration test with actual tracing", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		provider, err := SetupTracing(ctx,
 			WithServiceName("integration-test"),
 			WithServiceVersion("1.0.0"),
 		)
-		require.NoError(t, err)
-		require.NotNil(t, provider)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 		// Create a tracer and test actual tracing
 		tracer := provider.Tracer("integration-tracer")
-		assert.NotNil(t, tracer)
+		c.Check(tracer, quicktest.Not(quicktest.IsNil))
 
 		// Test creating spans
 		ctx, span := tracer.Start(ctx, "test_span")
-		require.NotNil(t, span)
-		assert.True(t, span.SpanContext().IsValid())
+		c.Check(span, quicktest.Not(quicktest.IsNil))
+		c.Check(span.SpanContext().IsValid(), quicktest.Equals, true)
 
 		// Create a child span
 		ctx, childSpan := tracer.Start(ctx, "child_span")
-		require.NotNil(t, childSpan)
-		assert.True(t, childSpan.SpanContext().IsValid())
+		c.Check(childSpan, quicktest.Not(quicktest.IsNil))
+		c.Check(childSpan.SpanContext().IsValid(), quicktest.Equals, true)
 
 		// Verify parent-child relationship
 		childSpanContext := childSpan.SpanContext()
 		parentSpanContext := span.SpanContext()
-		assert.Equal(t, parentSpanContext.TraceID(), childSpanContext.TraceID())
+		c.Check(parentSpanContext.TraceID(), quicktest.Equals, childSpanContext.TraceID())
 
 		// End spans
 		childSpan.End()
@@ -400,83 +425,89 @@ func TestSetupTracingIntegration(t *testing.T) {
 
 		// Cleanup
 		err = provider.Shutdown(ctx)
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupTracingSpanCreation(t *testing.T) {
-	t.Run("span creation and manipulation", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("span creation and manipulation", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		provider, err := SetupTracing(ctx)
-		require.NoError(t, err)
-		require.NotNil(t, provider)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 		tracer := provider.Tracer("test-tracer")
-		assert.NotNil(t, tracer)
+		c.Check(tracer, quicktest.Not(quicktest.IsNil))
 
 		// Test span creation
 		ctx, span := tracer.Start(ctx, "test-span")
-		assert.NotNil(t, span)
-		assert.True(t, span.SpanContext().IsValid())
+		c.Check(span, quicktest.Not(quicktest.IsNil))
+		c.Check(span.SpanContext().IsValid(), quicktest.Equals, true)
 
 		span.End()
 
 		// Cleanup
 		err = provider.Shutdown(ctx)
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupTracingPropagation(t *testing.T) {
-	t.Run("trace context propagation", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("trace context propagation", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		provider, err := SetupTracing(ctx)
-		require.NoError(t, err)
-		require.NotNil(t, provider)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 		tracer := provider.Tracer("test-tracer")
-		assert.NotNil(t, tracer)
+		c.Check(tracer, quicktest.Not(quicktest.IsNil))
 
 		// Create a span
 		ctx, span := tracer.Start(ctx, "parent-span")
-		assert.NotNil(t, span)
+		c.Check(span, quicktest.Not(quicktest.IsNil))
 
 		// Verify trace context is propagated
 		spanContext := span.SpanContext()
-		assert.True(t, spanContext.IsValid())
-		assert.True(t, spanContext.IsSampled())
+		c.Check(spanContext.IsValid(), quicktest.Equals, true)
+		c.Check(spanContext.IsSampled(), quicktest.Equals, true)
 
 		// Create child span in a new context
 		_, childSpan := tracer.Start(ctx, "child-span")
-		assert.NotNil(t, childSpan)
+		c.Check(childSpan, quicktest.Not(quicktest.IsNil))
 
 		// Verify parent-child relationship - same trace ID
 		childSpanContext := childSpan.SpanContext()
-		assert.Equal(t, spanContext.TraceID(), childSpanContext.TraceID())
+		c.Check(spanContext.TraceID(), quicktest.Equals, childSpanContext.TraceID())
 
 		childSpan.End()
 		span.End()
 
 		// Cleanup
 		err = provider.Shutdown(ctx)
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupTracingBatchExport(t *testing.T) {
-	t.Run("batch export configuration", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("batch export configuration", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		provider, err := SetupTracing(ctx)
-		require.NoError(t, err)
-		require.NotNil(t, provider)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 		// The provider should have a batch processor configured
 		// We can verify this by checking that the provider works correctly
 		tracer := provider.Tracer("test-tracer")
-		assert.NotNil(t, tracer)
+		c.Check(tracer, quicktest.Not(quicktest.IsNil))
 
 		// Create multiple spans to test batching
 		for i := 0; i < 5; i++ {
@@ -489,12 +520,14 @@ func TestSetupTracingBatchExport(t *testing.T) {
 
 		// Cleanup
 		err = provider.Shutdown(ctx)
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupTracingResourceConfiguration(t *testing.T) {
-	t.Run("resource configuration", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("resource configuration", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		serviceName := "resource-test"
@@ -504,21 +537,21 @@ func TestSetupTracingResourceConfiguration(t *testing.T) {
 			WithServiceName(serviceName),
 			WithServiceVersion(serviceVersion),
 		)
-		require.NoError(t, err)
-		require.NotNil(t, provider)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 		// Test that the provider works with the configured resource
 		tracer := provider.Tracer("test-tracer")
-		assert.NotNil(t, tracer)
+		c.Check(tracer, quicktest.Not(quicktest.IsNil))
 
 		// Create and use a span
 		ctx, span := tracer.Start(ctx, "resource_test_span")
-		require.NotNil(t, span)
+		c.Check(span, quicktest.Not(quicktest.IsNil))
 		span.End()
 
 		// Cleanup
 		err = provider.Shutdown(ctx)
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 

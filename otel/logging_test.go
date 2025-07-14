@@ -5,12 +5,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/frankban/quicktest"
 	"go.opentelemetry.io/otel/log/global"
 )
 
 func TestSetupLogging(t *testing.T) {
+	qt := quicktest.New(t)
+
 	tests := []struct {
 		name    string
 		options []Option
@@ -60,38 +61,40 @@ func TestSetupLogging(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt.Run(tt.name, func(c *quicktest.C) {
 			ctx := context.Background()
 
 			provider, err := SetupLogging(ctx, tt.options...)
 
 			if tt.wantErr {
-				assert.Error(t, err)
+				c.Check(err, quicktest.Not(quicktest.IsNil))
 				return
 			}
 
-			require.NoError(t, err)
-			require.NotNil(t, provider)
+			c.Check(err, quicktest.IsNil)
+			c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 			// Verify the provider is set globally
 			globalProvider := global.GetLoggerProvider()
-			assert.Equal(t, provider, globalProvider)
+			c.Check(provider, quicktest.Equals, globalProvider)
 
 			// Test that we can create a logger
 			logger := provider.Logger("test-logger")
-			assert.NotNil(t, logger)
+			c.Check(logger, quicktest.Not(quicktest.IsNil))
 
 			// Cleanup
 			err = provider.Shutdown(ctx)
-			assert.NoError(t, err)
+			c.Check(err, quicktest.IsNil)
 		})
 	}
 }
 
 func TestSetupLoggingWithCollector(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test with collector enabled - this will try to connect to a real endpoint
 	// In a real test environment, you might want to mock this or use a test collector
-	t.Run("collector enabled with invalid endpoint", func(t *testing.T) {
+	qt.Run("collector enabled with invalid endpoint", func(c *quicktest.C) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
@@ -107,43 +110,47 @@ func TestSetupLoggingWithCollector(t *testing.T) {
 		// The OTLP exporter might not fail immediately, so we check if we get a provider
 		// In some cases, it might succeed but fail later during export
 		if err != nil {
-			assert.Error(t, err)
-			assert.Contains(t, err.Error(), "failed to create OTLP log exporter")
+			c.Check(err, quicktest.Not(quicktest.IsNil))
+			c.Check(err.Error(), quicktest.Contains, "failed to create OTLP log exporter")
 		} else {
 			// If it succeeds, clean up
-			require.NotNil(t, provider)
+			c.Check(provider, quicktest.Not(quicktest.IsNil))
 			err = provider.Shutdown(ctx)
-			assert.NoError(t, err)
+			c.Check(err, quicktest.IsNil)
 		}
 	})
 }
 
 func TestSetupLoggingWithStdout(t *testing.T) {
-	t.Run("stdout exporter", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("stdout exporter", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		// Use default options (collector disabled = stdout exporter)
 		provider, err := SetupLogging(ctx)
 
-		require.NoError(t, err)
-		require.NotNil(t, provider)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 		// Verify it's set globally
 		globalProvider := global.GetLoggerProvider()
-		assert.Equal(t, provider, globalProvider)
+		c.Check(provider, quicktest.Equals, globalProvider)
 
 		// Test logging functionality
 		logger := provider.Logger("test-logger")
-		assert.NotNil(t, logger)
+		c.Check(logger, quicktest.Not(quicktest.IsNil))
 
 		// Cleanup
 		err = provider.Shutdown(ctx)
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupLoggingResourceAttributes(t *testing.T) {
-	t.Run("verify resource attributes", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("verify resource attributes", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		serviceName := "test-service"
@@ -154,93 +161,103 @@ func TestSetupLoggingResourceAttributes(t *testing.T) {
 			WithServiceVersion(serviceVersion),
 		)
 
-		require.NoError(t, err)
-		require.NotNil(t, provider)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 		// Get the resource from the provider
 		// Note: This is a bit tricky to test directly, but we can verify the provider works
 		logger := provider.Logger("test-logger")
-		assert.NotNil(t, logger)
+		c.Check(logger, quicktest.Not(quicktest.IsNil))
 
 		// Cleanup
 		err = provider.Shutdown(ctx)
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupLoggingMultipleCalls(t *testing.T) {
-	t.Run("multiple setup calls", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("multiple setup calls", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		// First setup
 		provider1, err := SetupLogging(ctx, WithServiceName("service1"))
-		require.NoError(t, err)
-		require.NotNil(t, provider1)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider1, quicktest.Not(quicktest.IsNil))
 
 		// Second setup - should work but might return the same provider due to global state
 		provider2, err := SetupLogging(ctx, WithServiceName("service2"))
-		require.NoError(t, err)
-		require.NotNil(t, provider2)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider2, quicktest.Not(quicktest.IsNil))
 
 		// Cleanup both
 		err = provider1.Shutdown(ctx)
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 
 		err = provider2.Shutdown(ctx)
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupLoggingContextCancellation(t *testing.T) {
-	t.Run("context cancellation", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("context cancellation", func(c *quicktest.C) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel() // Cancel immediately
 
 		provider, err := SetupLogging(ctx)
 
 		// Should still work even with cancelled context
-		require.NoError(t, err)
-		require.NotNil(t, provider)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 		// Cleanup
 		err = provider.Shutdown(context.Background())
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupLoggingShutdown(t *testing.T) {
-	t.Run("provider shutdown", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("provider shutdown", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		provider, err := SetupLogging(ctx)
-		require.NoError(t, err)
-		require.NotNil(t, provider)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 		// Shutdown the provider
 		err = provider.Shutdown(ctx)
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 
 		// Try to shutdown again - should not error
 		err = provider.Shutdown(ctx)
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupLoggingWithNilContext(t *testing.T) {
-	t.Run("nil context", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("nil context", func(c *quicktest.C) {
 		// This should work as context.Background() is used internally
 		provider, err := SetupLogging(context.TODO())
 
-		require.NoError(t, err)
-		require.NotNil(t, provider)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 		// Cleanup
 		err = provider.Shutdown(context.Background())
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupLoggingOptionsCombination(t *testing.T) {
+	qt := quicktest.New(t)
+
 	tests := []struct {
 		name    string
 		options []Option
@@ -278,33 +295,35 @@ func TestSetupLoggingOptionsCombination(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt.Run(tt.name, func(c *quicktest.C) {
 			ctx := context.Background()
 
 			provider, err := SetupLogging(ctx, tt.options...)
 
-			require.NoError(t, err)
-			require.NotNil(t, provider)
+			c.Check(err, quicktest.IsNil)
+			c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 			// Verify global provider is set
 			globalProvider := global.GetLoggerProvider()
-			assert.Equal(t, provider, globalProvider)
+			c.Check(provider, quicktest.Equals, globalProvider)
 
 			// Cleanup
 			err = provider.Shutdown(ctx)
-			assert.NoError(t, err)
+			c.Check(err, quicktest.IsNil)
 		})
 	}
 }
 
 func TestSetupLoggingDefaultValues(t *testing.T) {
-	t.Run("verify default values", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("verify default values", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		// Use no options to get default values
 		provider, err := SetupLogging(ctx)
-		require.NoError(t, err)
-		require.NotNil(t, provider)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 		// The default values should be:
 		// - ServiceName: "unknown"
@@ -315,16 +334,18 @@ func TestSetupLoggingDefaultValues(t *testing.T) {
 
 		// We can't easily verify these directly, but we can verify the provider works
 		logger := provider.Logger("test-logger")
-		assert.NotNil(t, logger)
+		c.Check(logger, quicktest.Not(quicktest.IsNil))
 
 		// Cleanup
 		err = provider.Shutdown(ctx)
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupLoggingErrorHandling(t *testing.T) {
-	t.Run("invalid port number", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("invalid port number", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		// Test with an invalid port that might cause issues
@@ -332,17 +353,19 @@ func TestSetupLoggingErrorHandling(t *testing.T) {
 
 		// This might still succeed as the port is only used when collector is enabled
 		if err != nil {
-			assert.Error(t, err)
+			c.Check(err, quicktest.Not(quicktest.IsNil))
 		} else {
-			require.NotNil(t, provider)
+			c.Check(provider, quicktest.Not(quicktest.IsNil))
 			err = provider.Shutdown(ctx)
-			assert.NoError(t, err)
+			c.Check(err, quicktest.IsNil)
 		}
 	})
 }
 
 func TestSetupLoggingConcurrentAccess(t *testing.T) {
-	t.Run("concurrent setup calls", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("concurrent setup calls", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		// Test concurrent setup calls
@@ -352,7 +375,7 @@ func TestSetupLoggingConcurrentAccess(t *testing.T) {
 			provider, err := SetupLogging(ctx, WithServiceName("concurrent1"))
 			if err == nil && provider != nil {
 				err = provider.Shutdown(ctx)
-				assert.NoError(t, err)
+				c.Check(err, quicktest.IsNil)
 			}
 			done <- true
 		}()
@@ -361,7 +384,7 @@ func TestSetupLoggingConcurrentAccess(t *testing.T) {
 			provider, err := SetupLogging(ctx, WithServiceName("concurrent2"))
 			if err == nil && provider != nil {
 				err = provider.Shutdown(ctx)
-				assert.NoError(t, err)
+				c.Check(err, quicktest.IsNil)
 			}
 			done <- true
 		}()
@@ -373,7 +396,9 @@ func TestSetupLoggingConcurrentAccess(t *testing.T) {
 }
 
 func TestSetupLoggingMemoryLeaks(t *testing.T) {
-	t.Run("memory leak prevention", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("memory leak prevention", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		// Create and destroy multiple providers to check for memory leaks
@@ -383,38 +408,40 @@ func TestSetupLoggingMemoryLeaks(t *testing.T) {
 				WithServiceVersion("1.0.0"),
 			)
 
-			require.NoError(t, err)
-			require.NotNil(t, provider)
+			c.Check(err, quicktest.IsNil)
+			c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 			// Create a logger to ensure it works
 			logger := provider.Logger("test-logger")
-			assert.NotNil(t, logger)
+			c.Check(logger, quicktest.Not(quicktest.IsNil))
 
 			// Shutdown immediately
 			err = provider.Shutdown(ctx)
-			assert.NoError(t, err)
+			c.Check(err, quicktest.IsNil)
 		}
 	})
 }
 
 func TestSetupLoggingIntegration(t *testing.T) {
-	t.Run("integration test with actual logging", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("integration test with actual logging", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		provider, err := SetupLogging(ctx,
 			WithServiceName("integration-test"),
 			WithServiceVersion("1.0.0"),
 		)
-		require.NoError(t, err)
-		require.NotNil(t, provider)
+		c.Check(err, quicktest.IsNil)
+		c.Check(provider, quicktest.Not(quicktest.IsNil))
 
 		// Create a logger and test actual logging
 		logger := provider.Logger("integration-logger")
-		assert.NotNil(t, logger)
+		c.Check(logger, quicktest.Not(quicktest.IsNil))
 
 		// Cleanup
 		err = provider.Shutdown(ctx)
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 

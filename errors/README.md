@@ -6,7 +6,7 @@ Add end-user messages to errors.
 errors to carry an (extendable) end-user message that can be used in e.g.
 handlers.
 
-## Overview
+## 1. Overview
 
 The `x/errors` package provides a comprehensive error handling solution that:
 
@@ -15,10 +15,11 @@ The `x/errors` package provides a comprehensive error handling solution that:
 3. **Provides domain-specific error types** - Predefined errors for common scenarios across different layers
 4. **Integrates with gRPC** - Automatic conversion to appropriate gRPC status codes
 5. **Handles complex error scenarios** - Supports joined errors and multi-level error chains
+6. **Database integration** - Automatic handling of PostgreSQL and GORM errors
 
-## Core Concepts
+## 2. Core Concepts
 
-### End-User Messages vs Internal Errors
+### 2.1 End-User Messages vs Internal Errors
 
 The package distinguishes between:
 
@@ -33,7 +34,7 @@ err := fmt.Errorf("failed to call connector vendor: %w", err)
 return errors.AddMessage(err, "Failed to call Vendor API.")
 ```
 
-### Error Wrapping Support
+### 2.2 Error Wrapping Support
 
 The package fully supports Go's error wrapping patterns:
 
@@ -50,9 +51,9 @@ err := fmt.Errorf("step 1: %w",
 )
 ```
 
-## API Reference
+## 3. API Reference
 
-### Core Functions
+### 3.1 Core Functions
 
 #### `AddMessage(err error, msg string) error`
 
@@ -83,7 +84,7 @@ Extracts the end-user message, falling back to `err.Error()` if no message exist
 userMsg := errors.MessageOrErr(err)
 ```
 
-### Domain Errors
+### 3.2 Domain Errors
 
 The package provides predefined errors for common scenarios:
 
@@ -154,7 +155,7 @@ var (
 var ErrMembershipNotFound = errors.New("membership not found")
 ```
 
-### gRPC Integration
+### 3.3 gRPC Integration
 
 #### `ConvertGRPCCode(err error) codes.Code`
 
@@ -175,8 +176,8 @@ return grpcErr
 
 **gRPC Code Mapping:**
 
-- `ErrAlreadyExists` → `codes.AlreadyExists`
-- `ErrNotFound`, `ErrNoDataDeleted`, `ErrNoDataUpdated`, `ErrMembershipNotFound` → `codes.NotFound`
+- `ErrAlreadyExists`, `gorm.ErrDuplicatedKey`, PostgreSQL duplicate key errors → `codes.AlreadyExists`
+- `ErrNotFound`, `ErrNoDataDeleted`, `ErrNoDataUpdated`, `ErrMembershipNotFound`, `gorm.ErrRecordNotFound` → `codes.NotFound`
 - `ErrInvalidArgument` and related validation errors → `codes.InvalidArgument`:
   - `ErrOwnerTypeNotMatch`
   - `bcrypt.ErrMismatchedHashAndPassword`
@@ -202,9 +203,17 @@ return grpcErr
 - `ErrRateLimiting` → `codes.ResourceExhausted`
 - Unknown errors → `codes.Unknown`
 
-## Usage Examples
+### 3.4 Database Integration
 
-### Basic Usage
+The package automatically handles common database errors:
+
+- **PostgreSQL duplicate key errors** (code 23505) are mapped to `codes.AlreadyExists`
+- **GORM errors** (`gorm.ErrDuplicatedKey`, `gorm.ErrRecordNotFound`) are properly mapped
+- **Custom database error detection** via `isDuplicateKeyErr()` function
+
+## 4. Usage Examples
+
+### 4.1 Basic Usage
 
 ```go
 package connector
@@ -232,7 +241,7 @@ func (c *Client) sendReq(reqURL, method, contentType string, data io.Reader) ([]
 }
 ```
 
-### gRPC Handler Integration
+### 4.2 gRPC Handler Integration
 
 ```go
 package handler
@@ -253,7 +262,7 @@ func (h *PublicHandler) DoAction(ctx context.Context, req *pb.DoActionRequest) (
 }
 ```
 
-### Complex Error Scenarios
+### 4.3 Complex Error Scenarios
 
 ```go
 // Handling joined errors
@@ -280,7 +289,7 @@ func processMultipleOperations() error {
 // "Multiple operations failed. Operation 1 failed. Operation 2 failed."
 ```
 
-### Domain-Specific Error Handling
+### 4.4 Domain-Specific Error Handling
 
 ```go
 func (s *Service) CreateUser(ctx context.Context, user *User) error {
@@ -303,7 +312,7 @@ func (s *Service) CreateUser(ctx context.Context, user *User) error {
 }
 ```
 
-### Authentication and Authorization Error Handling
+### 4.5 Authentication and Authorization Error Handling
 
 ```go
 func (s *Service) AuthenticateUser(ctx context.Context, credentials *Credentials) (*User, error) {
@@ -327,7 +336,7 @@ func (s *Service) AuthenticateUser(ctx context.Context, credentials *Credentials
 }
 ```
 
-### Organization Management Error Handling
+### 4.6 Organization Management Error Handling
 
 ```go
 func (s *Service) UpdateOrganizationOwner(ctx context.Context, orgID string, newOwnerID string) error {
@@ -351,9 +360,36 @@ func (s *Service) UpdateOrganizationOwner(ctx context.Context, orgID string, new
 }
 ```
 
-## Best Practices
+### 4.7 Database Error Handling
 
-### 1. Message Composition
+```go
+func (s *Service) CreateResource(ctx context.Context, resource *Resource) error {
+    // Attempt to create resource
+    if err := s.repo.CreateResource(ctx, resource); err != nil {
+        // Database errors are automatically handled by ConvertGRPCCode
+        // PostgreSQL duplicate key errors become codes.AlreadyExists
+        // GORM errors are properly mapped
+        return err
+    }
+
+    return nil
+}
+
+func (s *Handler) CreateResource(ctx context.Context, req *CreateResourceRequest) (*CreateResourceResponse, error) {
+    resource := &Resource{Name: req.Name}
+
+    if err := s.service.CreateResource(ctx, resource); err != nil {
+        // Automatically handles database errors and maps them to appropriate gRPC codes
+        return nil, errors.ConvertToGRPCError(err)
+    }
+
+    return &CreateResourceResponse{Resource: resource}, nil
+}
+```
+
+## 5. Best Practices
+
+### 5.1 Message Composition
 
 - **Be specific but concise**: Provide enough detail for users to understand and act on the error
 - **Use consistent language**: Maintain a consistent tone and terminology across your application
@@ -367,7 +403,7 @@ errors.AddMessage(err, "Unable to process your request. Please try again in a fe
 errors.AddMessage(err, "HTTP 503 Service Unavailable")
 ```
 
-### 2. Error Wrapping
+### 5.2 Error Wrapping
 
 - **Wrap errors at each layer**: Add context without losing the original error
 - **Use descriptive prefixes**: Help with debugging and error tracing
@@ -387,7 +423,7 @@ func (s *Service) ProcessData(data []byte) error {
 }
 ```
 
-### 3. Domain Error Usage
+### 5.3 Domain Error Usage
 
 - **Use predefined domain errors**: Leverage the built-in error types for consistency
 - **Create custom domain errors**: Add application-specific errors when needed
@@ -409,7 +445,7 @@ var ErrInvalidEmailFormat = errors.AddMessage(
 )
 ```
 
-### 4. gRPC Integration
+### 5.4 gRPC Integration
 
 - **Use ConvertToGRPCError for handlers**: Ensures proper status codes and messages
 - **Handle status errors appropriately**: Check if errors are already gRPC status errors
@@ -426,7 +462,41 @@ func (h *Handler) HandleRequest(ctx context.Context, req *Request) (*Response, e
 }
 ```
 
-### 5. Testing
+### 5.5 Database Error Handling
+
+- **Let the package handle database errors**: Don't manually map database errors
+- **Use consistent error handling**: Let `ConvertToGRPCError` handle all error mapping
+
+```go
+// Good - let the package handle database errors
+func (h *Handler) CreateUser(ctx context.Context, req *CreateUserRequest) (*CreateUserResponse, error) {
+    user := &User{Email: req.Email}
+
+    if err := h.service.CreateUser(ctx, user); err != nil {
+        // Automatically handles PostgreSQL and GORM errors
+        return nil, errors.ConvertToGRPCError(err)
+    }
+
+    return &CreateUserResponse{User: user}, nil
+}
+
+// Avoid - manual database error handling
+func (h *Handler) CreateUser(ctx context.Context, req *CreateUserRequest) (*CreateUserResponse, error) {
+    user := &User{Email: req.Email}
+
+    if err := h.repo.CreateUser(ctx, user); err != nil {
+        // Don't manually check for database errors
+        if strings.Contains(err.Error(), "duplicate key") {
+            return nil, status.Error(codes.AlreadyExists, "User already exists")
+        }
+        return nil, status.Error(codes.Internal, err.Error())
+    }
+
+    return &CreateUserResponse{User: user}, nil
+}
+```
+
+### 5.6 Testing
 
 - **Test error scenarios**: Ensure your error handling works correctly
 - **Verify user messages**: Check that end-user messages are appropriate
@@ -451,7 +521,7 @@ func TestService_ProcessData(t *testing.T) {
 }
 ```
 
-### 6. Error Propagation
+### 5.7 Error Propagation
 
 - **Don't lose error context**: Always wrap errors with meaningful context
 - **Preserve original errors**: Use `%w` verb for error wrapping
@@ -464,9 +534,9 @@ return fmt.Errorf("failed to process request: %w", err)
 return errors.New("failed to process request")
 ```
 
-## Migration Guide
+## 6. Migration Guide
 
-### From Standard Error Handling
+### 6.1 From Standard Error Handling
 
 **Before:**
 
@@ -492,7 +562,7 @@ func (h *Handler) HandleRequest(req *Request) (*Response, error) {
 }
 ```
 
-### Adding User Messages to Existing Code
+### 6.2 Adding User Messages to Existing Code
 
 **Before:**
 
@@ -511,13 +581,48 @@ if err := validateInput(input); err != nil {
 }
 ```
 
-## Performance Considerations
+### 6.3 Database Error Handling Migration
+
+**Before:**
+
+```go
+func (h *Handler) CreateUser(ctx context.Context, req *CreateUserRequest) (*CreateUserResponse, error) {
+    user := &User{Email: req.Email}
+
+    if err := h.repo.CreateUser(ctx, user); err != nil {
+        if strings.Contains(err.Error(), "duplicate key") {
+            return nil, status.Error(codes.AlreadyExists, "User already exists")
+        }
+        return nil, status.Error(codes.Internal, err.Error())
+    }
+
+    return &CreateUserResponse{User: user}, nil
+}
+```
+
+**After:**
+
+```go
+func (h *Handler) CreateUser(ctx context.Context, req *CreateUserRequest) (*CreateUserResponse, error) {
+    user := &User{Email: req.Email}
+
+    if err := h.repo.CreateUser(ctx, user); err != nil {
+        // Automatically handles PostgreSQL and GORM errors
+        return nil, errors.ConvertToGRPCError(err)
+    }
+
+    return &CreateUserResponse{User: user}, nil
+}
+```
+
+## 7. Performance Considerations
 
 - **Minimal overhead**: The package adds minimal runtime overhead
 - **Memory efficient**: Error wrapping doesn't create unnecessary allocations
 - **Fast message extraction**: Message extraction is optimized for common cases
+- **Efficient database error detection**: PostgreSQL error detection uses type assertions
 
-## Contributing
+## 8. Contributing
 
 When adding new error types or functionality:
 
@@ -525,7 +630,8 @@ When adding new error types or functionality:
 2. **Add appropriate gRPC mappings**: Update `ConvertGRPCCode` for new domain errors
 3. **Include tests**: Add comprehensive tests for new functionality
 4. **Update documentation**: Keep this README current with new features
+5. **Consider database integration**: Add database error mappings if applicable
 
-## License
+## 9. License
 
 This package is part of the Instill AI x library and follows the same licensing terms.

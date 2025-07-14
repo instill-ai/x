@@ -4,7 +4,7 @@ A comprehensive gRPC client framework with built-in interceptors, TLS support, a
 
 The `x/client` package provides a production-ready gRPC client setup with comprehensive middleware support, including metadata propagation, TLS/SSL support, and type-safe client creation for the Instill AI platform services. It's designed to work seamlessly with the Instill AI platform and follows best practices for client-side observability and error handling.
 
-## Overview
+## 1. Overview
 
 The `x/client` package provides:
 
@@ -16,9 +16,9 @@ The `x/client` package provides:
 6. **Service configuration management** - Structured configuration for multi-service environments
 7. **Options pattern** - Flexible and extensible client configuration
 
-## Core Components
+## 2. Core Concepts
 
-### Configuration (`config.go`)
+### 2.1 Configuration (`config.go`)
 
 Core configuration structures for client setup and service connections.
 
@@ -46,7 +46,7 @@ type ServiceConfig struct {
 }
 ```
 
-### Constants (`constant.go`)
+### 2.2 Constants (`constant.go`)
 
 Package-wide constants and configuration values.
 
@@ -59,7 +59,7 @@ const (
 )
 ```
 
-### gRPC Client Options (`grpc/options.go`)
+### 2.3 gRPC Client Options (`grpc/options.go`)
 
 Configuration options and dial options creation for gRPC clients.
 
@@ -87,17 +87,19 @@ conn, err := grpc.Dial("localhost:8080", dialOpts...)
 #### Configuration Options
 
 ```go
-// TLS configuration
-grpc.WithHTTPSConfig(client.HTTPSConfig{
-    Cert: "/path/to/cert.pem",
-    Key:  "/path/to/key.pem",
+// Service configuration
+grpc.WithServiceConfig(client.ServiceConfig{
+    Host:        "localhost",
+    PublicPort:  8080,
+    PrivatePort: 8081,
+    HTTPS:       client.HTTPSConfig{},
 })
 
 // Observability
 grpc.WithSetOTELClientHandler(true)
 ```
 
-### gRPC Client Factory (`grpc/clients.go`)
+### 2.4 gRPC Client Factory (`grpc/clients.go`)
 
 Type-safe client creation for Instill AI platform services using the options pattern and reflection-based type inference.
 
@@ -124,9 +126,6 @@ The client factory automatically supports all Instill AI platform service client
 ```go
 // WithServiceConfig sets the service configuration
 func WithServiceConfig(svc client.ServiceConfig) Option
-
-// WithHTTPSConfig sets the HTTPS configuration for TLS
-func WithHTTPSConfig(config client.HTTPSConfig) Option
 
 // WithSetOTELClientHandler enables or disables the OTEL client handler
 func WithSetOTELClientHandler(enable bool) Option
@@ -156,7 +155,7 @@ defer closeFn()
 response, err := client.CreatePipeline(ctx, request)
 ```
 
-### Metadata Interceptor (`grpc/interceptor/metadata.go`)
+### 2.5 Metadata Interceptor (`grpc/interceptor/metadata.go`)
 
 Handles metadata propagation from incoming to outgoing contexts for both unary and streaming gRPC calls.
 
@@ -180,9 +179,9 @@ Automatically propagates metadata from incoming context to outgoing gRPC stream 
 // No manual configuration required
 ```
 
-## API Reference
+## 3. API Reference
 
-### Core Functions
+### 3.1 Core Functions
 
 #### `grpc.NewClientOptionsAndCreds(options ...Option) ([]grpc.DialOption, error)`
 
@@ -212,7 +211,7 @@ Creates a type-safe gRPC client using the options pattern and reflection-based t
 - `func() error`: Connection close function
 - `error`: Any creation errors
 
-### Configuration Options
+### 3.2 Configuration Options
 
 #### `grpc.WithServiceConfig(svc client.ServiceConfig)`
 
@@ -227,17 +226,6 @@ grpc.WithServiceConfig(client.ServiceConfig{
 })
 ```
 
-#### `grpc.WithHTTPSConfig(config client.HTTPSConfig)`
-
-Sets TLS/SSL configuration.
-
-```go
-config := client.HTTPSConfig{
-    Cert: "/path/to/cert.pem",
-    Key:  "/path/to/key.pem",
-}
-```
-
 #### `grpc.WithSetOTELClientHandler(enable bool)`
 
 Enables or disables OpenTelemetry collector integration.
@@ -246,9 +234,9 @@ Enables or disables OpenTelemetry collector integration.
 grpc.WithSetOTELClientHandler(true)
 ```
 
-## Usage Examples
+## 4. Usage Examples
 
-### Basic Client Setup
+### 4.1 Basic Client Setup
 
 ```go
 package main
@@ -293,7 +281,7 @@ func main() {
 }
 ```
 
-### Client with TLS
+### 4.2 Client with TLS
 
 ```go
 // Configure service with TLS
@@ -301,16 +289,15 @@ svc := client.ServiceConfig{
     Host:        "secure.example.com",
     PublicPort:  443,
     PrivatePort: 8443,
-    HTTPS:       client.HTTPSConfig{},
+    HTTPS:       client.HTTPSConfig{
+        Cert: "/path/to/cert.pem",
+        Key:  "/path/to/key.pem",
+    },
 }
 
 // Create secure client
 client, closeFn, err := grpc.NewClient[pipelinepb.PipelinePublicServiceClient](
     grpc.WithServiceConfig(svc),
-    grpc.WithHTTPSConfig(client.HTTPSConfig{
-        Cert: "/path/to/client.crt",
-        Key:  "/path/to/client.key",
-    }),
     grpc.WithSetOTELClientHandler(true),
 )
 if err != nil {
@@ -319,7 +306,7 @@ if err != nil {
 defer closeFn()
 ```
 
-### Multiple Service Clients
+### 4.3 Multiple Service Clients
 
 ```go
 // Configure multiple services
@@ -357,7 +344,7 @@ if err != nil {
 defer modelClose()
 ```
 
-### Usage Service Client
+### 4.4 Usage Service Client
 
 ```go
 // Create usage service client
@@ -378,16 +365,12 @@ if err != nil {
 defer closeFn()
 ```
 
-### Custom Dial Options
+### 4.5 Custom Dial Options
 
 ```go
 // Create custom dial options
 dialOpts, err := grpc.NewClientOptionsAndCreds(
     grpc.WithSetOTELClientHandler(true),
-    grpc.WithHTTPSConfig(client.HTTPSConfig{
-        Cert: "/path/to/cert.pem",
-        Key:  "/path/to/key.pem",
-    }),
 )
 if err != nil {
     log.Fatal(err)
@@ -404,7 +387,7 @@ defer conn.Close()
 client := pipelinepb.NewPipelinePublicServiceClient(conn)
 ```
 
-### Private Service Access
+### 4.6 Private Service Access
 
 ```go
 // Access private service endpoints
@@ -426,7 +409,7 @@ if err != nil {
 defer closeFn()
 ```
 
-### Minimal Configuration
+### 4.7 Minimal Configuration
 
 ```go
 // Create client with minimal options (uses defaults)
@@ -440,9 +423,9 @@ if err != nil {
 defer closeFn()
 ```
 
-## Best Practices
+## 5. Best Practices
 
-### 1. Connection Management
+### 5.1 Connection Management
 
 - **Always defer close**: Use the returned close function to properly close connections
 - **Handle errors**: Check for connection errors and handle them appropriately
@@ -464,7 +447,7 @@ defer cancel()
 response, err := client.CreatePipeline(ctx, request)
 ```
 
-### 2. Service Configuration
+### 5.2 Service Configuration
 
 - **Use descriptive hosts**: Use meaningful hostnames for different environments
 - **Configure ports properly**: Use public ports for external access, private for internal
@@ -484,21 +467,20 @@ svc := client.ServiceConfig{
     Host:        "api.production.example.com",
     PublicPort:  443,
     PrivatePort: 8443,
-    HTTPS:       client.HTTPSConfig{},
-}
-
-// Use WithHTTPSConfig for TLS
-client, closeFn, err := grpc.NewClient[pipelinepb.PipelinePublicServiceClient](
-    grpc.WithServiceConfig(svc),
-    grpc.WithHTTPSConfig(client.HTTPSConfig{
+    HTTPS:       client.HTTPSConfig{
         Cert: "/etc/ssl/certs/client.crt",
         Key:  "/etc/ssl/private/client.key",
-    }),
+    },
+}
+
+// Create client with TLS
+client, closeFn, err := grpc.NewClient[pipelinepb.PipelinePublicServiceClient](
+    grpc.WithServiceConfig(svc),
     grpc.WithSetOTELClientHandler(true),
 )
 ```
 
-### 3. Error Handling
+### 5.3 Error Handling
 
 - **Check connection errors**: Always handle connection creation errors
 - **Use appropriate timeouts**: Set context timeouts for gRPC calls
@@ -525,7 +507,7 @@ if err != nil {
 }
 ```
 
-### 4. Observability
+### 5.4 Observability
 
 - **Enable OpenTelemetry**: Use OTEL for comprehensive tracing and metrics
 - **Monitor connection health**: Check connection state periodically
@@ -546,7 +528,7 @@ defer closeFn()
 // The client factory handles connection state internally
 ```
 
-### 5. Type Safety
+### 5.5 Type Safety
 
 - **Use generic client creation**: Leverage the type-safe `NewClient[T]` function
 - **Specify correct types**: Use the exact gRPC client type for compile-time safety
@@ -567,7 +549,7 @@ defer closeFn()
 response, err := client.CreatePipeline(ctx, request) // Type-safe call
 ```
 
-### 6. Options Pattern
+### 5.6 Options Pattern
 
 - **Use required options**: Always provide `WithServiceConfig`
 - **Leverage defaults**: Use default values for optional configurations
@@ -586,36 +568,77 @@ client, closeFn, err := grpc.NewClient[pipelinepb.PipelinePublicServiceClient](
 )
 ```
 
-### 7. Testing
+### 5.7 Testing
 
-- **Mock external services**: Use gRPC testing utilities for unit tests
-- **Test error scenarios**: Verify proper error handling
-- **Test connection management**: Ensure connections are properly closed
+The client package uses **minimock** for unit testing with generated mocks.
+
+#### Mock Generation
+
+```bash
+cd mock && go generate ./generator.go
+```
+
+Generates mocks for: `ClientCreator`, `ConnectionManager`, `ClientFactory`, `TLSProvider`, `MetadataPropagator`, `Option`, `Options`, `ServiceConfig`, `HTTPSConfig`.
+
+#### Unit Testing
 
 ```go
-func TestClient_CreatePipeline(t *testing.T) {
-    // Create test server
-    server := grpc.NewServer()
-    defer server.Stop()
+func TestNewClient_WithMocks(t *testing.T) {
+    qt := quicktest.New(t)
+    mc := minimock.NewController(t)
 
-    // Create test client
+    mockFactory := mockclient.NewClientFactoryMock(mc)
+    mockConnManager := mockclient.NewConnectionManagerMock(mc)
+
+    // Set expectations
+    mockConnManager.NewConnectionMock.Expect("localhost", 8080, mockclient.HTTPSConfig{}, true).Return(nil, nil)
+
     client, closeFn, err := grpc.NewClient[pipelinepb.PipelinePublicServiceClient](
         grpc.WithServiceConfig(testServiceConfig),
-        grpc.WithSetOTELClientHandler(false),
     )
-    require.NoError(t, err)
-    defer closeFn()
 
-    // Test client operations
-    response, err := client.CreatePipeline(ctx, testRequest)
-    assert.NoError(t, err)
-    assert.NotNil(t, response)
+    qt.Check(err, quicktest.IsNil)
+    defer closeFn()
 }
 ```
 
-## Migration Guide
+#### Integration Testing
 
-### From Manual gRPC Client Creation
+```go
+func TestNewClient_Integration(t *testing.T) {
+    qt := quicktest.New(t)
+
+    server, port := createTestGRPCServer(t)
+    defer server.Stop()
+
+    client, closeFn, err := grpc.NewClient[pipelinepb.PipelinePublicServiceClient](
+        grpc.WithServiceConfig(client.ServiceConfig{Host: "localhost", PublicPort: port}),
+    )
+
+    qt.Check(err, quicktest.IsNil)
+    defer closeFn()
+}
+
+func createTestGRPCServer(t testing.TB) (*grpc.Server, int) {
+    lis, _ := net.Listen("tcp", ":0")
+    port := lis.Addr().(*net.TCPAddr).Port
+    s := grpc.NewServer()
+    go s.Serve(lis)
+    return s, port
+}
+```
+
+#### Best Practices
+
+- **Use minimock for unit tests**: Isolated testing with generated mocks
+- **Test error scenarios**: Verify error handling with mock expectations
+- **Use quicktest assertions**: Consistent test assertions
+- **Mock external dependencies**: Avoid external service dependencies in unit tests
+- **Verify expectations**: Minimock automatically verifies all mock expectations
+
+## 6. Migration Guide
+
+### 6.1 From Manual gRPC Client Creation
 
 **Before:**
 
@@ -655,28 +678,7 @@ if err != nil {
 defer closeFn()
 ```
 
-### From Old Client Factory API
-
-**Before:**
-
-```go
-client, closeFn, err := grpc.NewClient[pipelinepb.PipelinePublicServiceClient](
-    grpc.PipelinePublic,
-    svc,
-    false,
-)
-```
-
-**After:**
-
-```go
-client, closeFn, err := grpc.NewClient[pipelinepb.PipelinePublicServiceClient](
-    grpc.WithServiceConfig(svc),
-    grpc.WithSetOTELClientHandler(false),
-)
-```
-
-### Adding Custom Interceptors
+### 6.2 Adding Custom Interceptors
 
 ```go
 // Create base dial options
@@ -697,7 +699,7 @@ dialOpts = append(dialOpts,
 conn, err := grpc.Dial("localhost:8080", dialOpts...)
 ```
 
-## Performance Considerations
+## 7. Performance Considerations
 
 - **Connection pooling**: The client factory manages connections efficiently
 - **Minimal overhead**: Interceptors are optimized for performance
@@ -706,9 +708,9 @@ conn, err := grpc.Dial("localhost:8080", dialOpts...)
 - **Options validation**: Efficient validation of required options
 - **Reflection optimization**: Type inference is optimized for minimal runtime overhead
 
-## Troubleshooting
+## 8. Troubleshooting
 
-### Common Issues
+### 8.1 Common Issues
 
 1. **Connection failures**: Check host, port, and TLS configuration
 2. **Type inference errors**: Ensure correct client type is specified in generic parameter
@@ -716,7 +718,7 @@ conn, err := grpc.Dial("localhost:8080", dialOpts...)
 4. **Metadata propagation**: Check context setup for metadata
 5. **Missing required options**: Ensure `WithServiceConfig` is provided
 
-### Debug Mode
+### 8.2 Debug Mode
 
 Enable debug logging to troubleshoot client behavior:
 
@@ -736,7 +738,7 @@ if err != nil {
 defer closeFn()
 ```
 
-### Validation Errors
+### 8.3 Validation Errors
 
 The new options pattern provides better error messages for missing or invalid configurations:
 
@@ -759,7 +761,7 @@ client, closeFn, err := grpc.NewClient[UnsupportedClient](
 // Error: "unsupported client type: UnsupportedClient"
 ```
 
-## Contributing
+## 9. Contributing
 
 When adding new functionality:
 
@@ -771,6 +773,6 @@ When adding new functionality:
 6. **Validate options**: Add proper validation for new required options
 7. **Update client registry**: Add new client types to the client registry in `clients.go`
 
-## License
+## 10. License
 
 This package is part of the Instill AI x library and follows the same licensing terms.

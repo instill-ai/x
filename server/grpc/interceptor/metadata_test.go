@@ -5,16 +5,21 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/frankban/quicktest"
+	"github.com/gojuno/minimock/v3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	errorsx "github.com/instill-ai/x/errors"
+
+	mockserver "github.com/instill-ai/x/mock/server"
 )
 
 func TestUnaryAppendMetadataInterceptor(t *testing.T) {
+	qt := quicktest.New(t)
+
 	tests := []struct {
 		name            string
 		ctx             context.Context
@@ -35,9 +40,9 @@ func TestUnaryAppendMetadataInterceptor(t *testing.T) {
 			handler: func(ctx context.Context, req any) (any, error) {
 				// Verify metadata is preserved
 				md, ok := metadata.FromIncomingContext(ctx)
-				assert.True(t, ok, "metadata should be present in context")
-				assert.Equal(t, "123", md.Get("user-id")[0])
-				assert.Equal(t, "abc123", md.Get("token")[0])
+				qt.Check(ok, quicktest.IsTrue)
+				qt.Check(md.Get("user-id")[0], quicktest.Equals, "123")
+				qt.Check(md.Get("token")[0], quicktest.Equals, "abc123")
 				return "test response", nil
 			},
 			expectedResp: "test response",
@@ -110,7 +115,7 @@ func TestUnaryAppendMetadataInterceptor(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt.Run(tt.name, func(c *quicktest.C) {
 			// Create interceptor
 			interceptor := UnaryAppendMetadataInterceptor
 
@@ -123,24 +128,26 @@ func TestUnaryAppendMetadataInterceptor(t *testing.T) {
 			resp, err := interceptor(tt.ctx, tt.req, info, tt.handler)
 
 			// Verify response
-			assert.Equal(t, tt.expectedResp, resp, tt.description)
+			c.Check(resp, quicktest.Equals, tt.expectedResp)
 
 			// Verify error
 			if tt.expectedErr != nil {
-				assert.Equal(t, tt.expectedErr, err, tt.description)
+				c.Check(err, quicktest.Equals, tt.expectedErr)
 			} else if tt.expectedErrCode != codes.OK {
-				assert.Error(t, err, tt.description)
+				c.Check(err, quicktest.Not(quicktest.IsNil))
 				st, ok := status.FromError(err)
-				assert.True(t, ok, "should be a gRPC status error")
-				assert.Equal(t, tt.expectedErrCode, st.Code(), tt.description)
+				c.Check(ok, quicktest.IsTrue)
+				c.Check(st.Code(), quicktest.Equals, tt.expectedErrCode)
 			} else {
-				assert.NoError(t, err, tt.description)
+				c.Check(err, quicktest.IsNil)
 			}
 		})
 	}
 }
 
 func TestUnaryAppendMetadataInterceptor_NoMetadata(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test case where metadata cannot be extracted
 	ctx := context.Background() // No metadata context
 
@@ -152,19 +159,21 @@ func TestUnaryAppendMetadataInterceptor_NoMetadata(t *testing.T) {
 	handler := func(ctx context.Context, req any) (any, error) {
 		// Verify that empty metadata is created when none exists
 		md, ok := metadata.FromIncomingContext(ctx)
-		assert.True(t, ok, "metadata should be present even when none was provided")
-		assert.Empty(t, md, "metadata should be empty when none was provided")
+		qt.Check(ok, quicktest.IsTrue)
+		qt.Check(len(md), quicktest.Equals, 0)
 		return "response", nil
 	}
 
 	// This should succeed and create empty metadata
 	resp, err := interceptor(ctx, "request", info, handler)
 
-	assert.Equal(t, "response", resp, "should return successful response when no metadata is provided")
-	assert.NoError(t, err, "should not return error when no metadata is provided")
+	qt.Check(resp, quicktest.Equals, "response")
+	qt.Check(err, quicktest.IsNil)
 }
 
 func TestStreamAppendMetadataInterceptor(t *testing.T) {
+	qt := quicktest.New(t)
+
 	tests := []struct {
 		name            string
 		ctx             context.Context
@@ -182,9 +191,9 @@ func TestStreamAppendMetadataInterceptor(t *testing.T) {
 			handler: func(srv any, stream grpc.ServerStream) error {
 				// Verify metadata is preserved in stream context
 				md, ok := metadata.FromIncomingContext(stream.Context())
-				assert.True(t, ok, "metadata should be present in stream context")
-				assert.Equal(t, "123", md.Get("user-id")[0])
-				assert.Equal(t, "abc123", md.Get("token")[0])
+				qt.Check(ok, quicktest.IsTrue)
+				qt.Check(md.Get("user-id")[0], quicktest.Equals, "123")
+				qt.Check(md.Get("token")[0], quicktest.Equals, "abc123")
 				return nil
 			},
 			expectedErr: nil,
@@ -236,12 +245,16 @@ func TestStreamAppendMetadataInterceptor(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt.Run(tt.name, func(c *quicktest.C) {
 			// Create interceptor
 			interceptor := StreamAppendMetadataInterceptor
 
 			// Create mock stream
-			stream := &MockServerStream{ctx: tt.ctx}
+			mc := minimock.NewController(t)
+			stream := mockserver.NewServerStreamMock(mc)
+
+			// Add this line to set up the Context expectation
+			stream.ContextMock.Expect().Return(tt.ctx)
 
 			// Create mock server info
 			info := &grpc.StreamServerInfo{
@@ -253,25 +266,32 @@ func TestStreamAppendMetadataInterceptor(t *testing.T) {
 
 			// Verify error
 			if tt.expectedErr != nil {
-				assert.Equal(t, tt.expectedErr, err, tt.description)
+				c.Check(err, quicktest.Equals, tt.expectedErr)
 			} else if tt.expectedErrCode != codes.OK {
-				assert.Error(t, err, tt.description)
+				c.Check(err, quicktest.Not(quicktest.IsNil))
 				st, ok := status.FromError(err)
-				assert.True(t, ok, "should be a gRPC status error")
-				assert.Equal(t, tt.expectedErrCode, st.Code(), tt.description)
+				c.Check(ok, quicktest.IsTrue)
+				c.Check(st.Code(), quicktest.Equals, tt.expectedErrCode)
 			} else {
-				assert.NoError(t, err, tt.description)
+				c.Check(err, quicktest.IsNil)
 			}
 		})
 	}
 }
 
 func TestStreamAppendMetadataInterceptor_NoMetadata(t *testing.T) {
-	// Test case where metadata cannot be extracted from stream
-	ctx := context.Background() // No metadata context
+	qt := quicktest.New(t)
 
+	// Test case where metadata cannot be extracted from stream
 	interceptor := StreamAppendMetadataInterceptor
-	stream := &MockServerStream{ctx: ctx}
+	mc := minimock.NewController(t)
+	stream := mockserver.NewServerStreamMock(mc)
+
+	// Set up Context expectation for TWO calls
+	ctx := context.Background()
+	stream.ContextMock.Expect().Return(ctx)
+	stream.ContextMock.Expect().Return(ctx)
+
 	info := &grpc.StreamServerInfo{
 		FullMethod: "test.Service/StreamMethod",
 	}
@@ -279,18 +299,20 @@ func TestStreamAppendMetadataInterceptor_NoMetadata(t *testing.T) {
 	handler := func(srv any, stream grpc.ServerStream) error {
 		// Verify that empty metadata is created when none exists
 		md, ok := metadata.FromIncomingContext(stream.Context())
-		assert.True(t, ok, "metadata should be present even when none was provided")
-		assert.Empty(t, md, "metadata should be empty when none was provided")
+		qt.Check(ok, quicktest.IsTrue)
+		qt.Check(len(md), quicktest.Equals, 0)
 		return nil
 	}
 
 	// This should succeed and create empty metadata
 	err := interceptor(nil, stream, info, handler)
 
-	assert.NoError(t, err, "should not return error when no metadata is provided")
+	qt.Check(err, quicktest.IsNil)
 }
 
 func TestStreamAppendMetadataInterceptor_ContextPreservation(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test that the context is properly preserved in the wrapped stream
 	originalCtx := metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
 		"user-id": "123",
@@ -298,7 +320,12 @@ func TestStreamAppendMetadataInterceptor_ContextPreservation(t *testing.T) {
 	}))
 
 	interceptor := StreamAppendMetadataInterceptor
-	stream := &MockServerStream{ctx: originalCtx}
+	mc := minimock.NewController(t)
+	stream := mockserver.NewServerStreamMock(mc)
+
+	// Set up Context expectation for TWO calls
+	stream.ContextMock.Expect().Return(originalCtx)
+
 	info := &grpc.StreamServerInfo{
 		FullMethod: "test.Service/StreamMethod",
 	}
@@ -309,29 +336,41 @@ func TestStreamAppendMetadataInterceptor_ContextPreservation(t *testing.T) {
 
 		// Verify metadata is preserved
 		md, ok := metadata.FromIncomingContext(capturedCtx)
-		assert.True(t, ok, "metadata should be present in captured context")
-		assert.Equal(t, "123", md.Get("user-id")[0])
-		assert.Equal(t, "abc123", md.Get("token")[0])
+		qt.Check(ok, quicktest.IsTrue)
+		qt.Check(md.Get("user-id")[0], quicktest.Equals, "123")
+		qt.Check(md.Get("token")[0], quicktest.Equals, "abc123")
 
 		return nil
 	}
 
 	err := interceptor(nil, stream, info, handler)
-	assert.NoError(t, err, "should not return error for successful handler")
+	qt.Check(err, quicktest.IsNil)
 
 	// Verify context was captured and is different from original
-	assert.NotNil(t, capturedCtx, "context should be captured")
-	assert.NotEqual(t, originalCtx, capturedCtx, "context should be wrapped")
+	qt.Check(capturedCtx, quicktest.Not(quicktest.IsNil))
+	qt.Check(capturedCtx, quicktest.Not(quicktest.Equals), originalCtx)
 }
 
 func TestStreamAppendMetadataInterceptor_StreamMethods(t *testing.T) {
-	// Test that the wrapped stream properly implements all required methods
-	ctx := metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
-		"test-key": "test-value",
-	}))
+	qt := quicktest.New(t)
 
+	// Test that the wrapped stream properly implements all required methods
 	interceptor := StreamAppendMetadataInterceptor
-	originalStream := &MockServerStream{ctx: ctx}
+	mc := minimock.NewController(t)
+	originalStream := mockserver.NewServerStreamMock(mc)
+
+	// Set up Context expectation for TWO calls
+	ctx := context.Background()
+	originalStream.ContextMock.Expect().Return(ctx)
+	originalStream.ContextMock.Expect().Return(ctx)
+
+	// Set up expectations for other stream methods that will be called
+	originalStream.RecvMsgMock.Expect("test").Return(nil)
+	originalStream.SendMsgMock.Expect("test").Return(nil)
+	originalStream.SendHeaderMock.Expect(metadata.New(map[string]string{})).Return(nil)
+	originalStream.SetHeaderMock.Expect(metadata.New(map[string]string{})).Return(nil)
+	originalStream.SetTrailerMock.Expect(metadata.New(map[string]string{}))
+
 	info := &grpc.StreamServerInfo{
 		FullMethod: "test.Service/StreamMethod",
 	}
@@ -341,22 +380,24 @@ func TestStreamAppendMetadataInterceptor_StreamMethods(t *testing.T) {
 		wrappedStream = stream
 
 		// Test that stream methods work
-		assert.NotNil(t, stream.Context(), "Context() should return non-nil context")
-		assert.NoError(t, stream.RecvMsg("test"), "RecvMsg should not error")
-		assert.NoError(t, stream.SendMsg("test"), "SendMsg should not error")
-		assert.NoError(t, stream.SendHeader(metadata.New(map[string]string{})), "SendHeader should not error")
-		assert.NoError(t, stream.SetHeader(metadata.New(map[string]string{})), "SetHeader should not error")
+		qt.Check(stream.Context(), quicktest.Not(quicktest.IsNil))
+		qt.Check(stream.RecvMsg("test"), quicktest.IsNil)
+		qt.Check(stream.SendMsg("test"), quicktest.IsNil)
+		qt.Check(stream.SendHeader(metadata.New(map[string]string{})), quicktest.IsNil)
+		qt.Check(stream.SetHeader(metadata.New(map[string]string{})), quicktest.IsNil)
 		stream.SetTrailer(metadata.New(map[string]string{})) // SetTrailer has no return value
 
 		return nil
 	}
 
 	err := interceptor(nil, originalStream, info, handler)
-	assert.NoError(t, err, "should not return error")
-	assert.NotNil(t, wrappedStream, "wrapped stream should be created")
+	qt.Check(err, quicktest.IsNil)
+	qt.Check(wrappedStream, quicktest.Not(quicktest.IsNil))
 }
 
 func TestUnaryAppendMetadataInterceptor_ErrorConversion(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test various error types and their conversion
 	testCases := []struct {
 		name         string
@@ -409,7 +450,7 @@ func TestUnaryAppendMetadataInterceptor_ErrorConversion(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+		qt.Run(tc.name, func(c *quicktest.C) {
 			ctx := metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
 				"test-key": "test-value",
 			}))
@@ -426,19 +467,21 @@ func TestUnaryAppendMetadataInterceptor_ErrorConversion(t *testing.T) {
 			resp, err := interceptor(ctx, "request", info, handler)
 
 			if tc.handlerError == nil {
-				assert.NoError(t, err, tc.description)
-				assert.Equal(t, "response", resp, tc.description)
+				c.Check(err, quicktest.IsNil)
+				c.Check(resp, quicktest.Equals, "response")
 			} else {
-				assert.Error(t, err, tc.description)
+				c.Check(err, quicktest.Not(quicktest.IsNil))
 				st, ok := status.FromError(err)
-				assert.True(t, ok, "should be a gRPC status error")
-				assert.Equal(t, tc.expectedCode, st.Code(), tc.description)
+				c.Check(ok, quicktest.IsTrue)
+				c.Check(st.Code(), quicktest.Equals, tc.expectedCode)
 			}
 		})
 	}
 }
 
 func TestStreamAppendMetadataInterceptor_ErrorConversion(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test various error types and their conversion for streams
 	testCases := []struct {
 		name         string
@@ -479,13 +522,17 @@ func TestStreamAppendMetadataInterceptor_ErrorConversion(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+		qt.Run(tc.name, func(c *quicktest.C) {
+			interceptor := StreamAppendMetadataInterceptor
+			mc := minimock.NewController(t)
+			stream := mockserver.NewServerStreamMock(mc)
+
+			// Set up Context expectation for TWO calls
 			ctx := metadata.NewIncomingContext(context.Background(), metadata.New(map[string]string{
 				"test-key": "test-value",
 			}))
+			stream.ContextMock.Expect().Return(ctx)
 
-			interceptor := StreamAppendMetadataInterceptor
-			stream := &MockServerStream{ctx: ctx}
 			info := &grpc.StreamServerInfo{
 				FullMethod: "test.Service/StreamMethod",
 			}
@@ -497,18 +544,20 @@ func TestStreamAppendMetadataInterceptor_ErrorConversion(t *testing.T) {
 			err := interceptor(nil, stream, info, handler)
 
 			if tc.handlerError == nil {
-				assert.NoError(t, err, tc.description)
+				c.Check(err, quicktest.IsNil)
 			} else {
-				assert.Error(t, err, tc.description)
+				c.Check(err, quicktest.Not(quicktest.IsNil))
 				st, ok := status.FromError(err)
-				assert.True(t, ok, "should be a gRPC status error")
-				assert.Equal(t, tc.expectedCode, st.Code(), tc.description)
+				c.Check(ok, quicktest.IsTrue)
+				c.Check(st.Code(), quicktest.Equals, tc.expectedCode)
 			}
 		})
 	}
 }
 
 func TestUnaryAppendMetadataInterceptor_MetadataPreservation(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test that metadata is properly preserved and accessible in handler
 	originalMD := metadata.New(map[string]string{
 		"user-id":    "123",
@@ -532,17 +581,19 @@ func TestUnaryAppendMetadataInterceptor_MetadataPreservation(t *testing.T) {
 
 	resp, err := interceptor(ctx, "request", info, handler)
 
-	assert.NoError(t, err, "should not return error")
-	assert.Equal(t, "response", resp, "should return expected response")
-	assert.NotNil(t, capturedMD, "metadata should be captured")
+	qt.Check(err, quicktest.IsNil)
+	qt.Check(resp, quicktest.Equals, "response")
+	qt.Check(capturedMD, quicktest.Not(quicktest.IsNil))
 
 	// Verify all metadata keys are preserved
 	for key, values := range originalMD {
-		assert.Equal(t, values, capturedMD.Get(key), "metadata key %s should be preserved", key)
+		qt.Check(capturedMD.Get(key), quicktest.DeepEquals, values)
 	}
 }
 
 func TestStreamAppendMetadataInterceptor_MetadataPreservation(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test that metadata is properly preserved and accessible in stream handler
 	originalMD := metadata.New(map[string]string{
 		"user-id":    "123",
@@ -551,27 +602,28 @@ func TestStreamAppendMetadataInterceptor_MetadataPreservation(t *testing.T) {
 		"trace-id":   "trace-789",
 	})
 
-	ctx := metadata.NewIncomingContext(context.Background(), originalMD)
-
 	interceptor := StreamAppendMetadataInterceptor
-	stream := &MockServerStream{ctx: ctx}
+	mc := minimock.NewController(t)
+	stream := mockserver.NewServerStreamMock(mc)
+
+	// Set up Context expectation for TWO calls
+	ctx := metadata.NewIncomingContext(context.Background(), originalMD)
+	stream.ContextMock.Expect().Return(ctx)
+	stream.ContextMock.Expect().Return(ctx)
+
 	info := &grpc.StreamServerInfo{
 		FullMethod: "test.Service/StreamMethod",
 	}
 
-	var capturedMD metadata.MD
 	handler := func(srv any, stream grpc.ServerStream) error {
-		capturedMD, _ = metadata.FromIncomingContext(stream.Context())
+		// Verify metadata is preserved
+		md, ok := metadata.FromIncomingContext(stream.Context())
+		qt.Check(ok, quicktest.IsTrue)
+		qt.Check(md.Get("user-id")[0], quicktest.Equals, "123")
+		qt.Check(md.Get("token")[0], quicktest.Equals, "abc123")
 		return nil
 	}
 
 	err := interceptor(nil, stream, info, handler)
-
-	assert.NoError(t, err, "should not return error")
-	assert.NotNil(t, capturedMD, "metadata should be captured")
-
-	// Verify all metadata keys are preserved
-	for key, values := range originalMD {
-		assert.Equal(t, values, capturedMD.Get(key), "metadata key %s should be preserved", key)
-	}
+	qt.Check(err, quicktest.IsNil)
 }

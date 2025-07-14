@@ -4,26 +4,24 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/frankban/quicktest"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/sdk/log"
-	"go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/trace"
 )
 
 func TestNewSetupOptions(t *testing.T) {
-	t.Run("default values", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("default values", func(c *quicktest.C) {
 		opts := newSetupOptions()
 
-		assert.Equal(t, "unknown", opts.ServiceName)
-		assert.Equal(t, "unknown", opts.ServiceVersion)
-		assert.Equal(t, "localhost", opts.Host)
-		assert.Equal(t, 4317, opts.Port)
-		assert.False(t, opts.CollectorEnable)
+		c.Check(opts.ServiceName, quicktest.Equals, "unknown")
+		c.Check(opts.ServiceVersion, quicktest.Equals, "unknown")
+		c.Check(opts.Host, quicktest.Equals, "localhost")
+		c.Check(opts.Port, quicktest.Equals, 4317)
+		c.Check(opts.CollectorEnable, quicktest.Equals, false)
 	})
 
-	t.Run("with custom options", func(t *testing.T) {
+	qt.Run("with custom options", func(c *quicktest.C) {
 		opts := newSetupOptions(
 			WithServiceName("test-service"),
 			WithServiceVersion("1.0.0"),
@@ -32,29 +30,31 @@ func TestNewSetupOptions(t *testing.T) {
 			WithCollectorEnable(true),
 		)
 
-		assert.Equal(t, "test-service", opts.ServiceName)
-		assert.Equal(t, "1.0.0", opts.ServiceVersion)
-		assert.Equal(t, "custom-host", opts.Host)
-		assert.Equal(t, 8080, opts.Port)
-		assert.True(t, opts.CollectorEnable)
+		c.Check(opts.ServiceName, quicktest.Equals, "test-service")
+		c.Check(opts.ServiceVersion, quicktest.Equals, "1.0.0")
+		c.Check(opts.Host, quicktest.Equals, "custom-host")
+		c.Check(opts.Port, quicktest.Equals, 8080)
+		c.Check(opts.CollectorEnable, quicktest.Equals, true)
 	})
 
-	t.Run("partial options", func(t *testing.T) {
+	qt.Run("partial options", func(c *quicktest.C) {
 		opts := newSetupOptions(
 			WithServiceName("partial-service"),
 			WithCollectorEnable(true),
 		)
 
-		assert.Equal(t, "partial-service", opts.ServiceName)
-		assert.Equal(t, "unknown", opts.ServiceVersion) // default
-		assert.Equal(t, "localhost", opts.Host)         // default
-		assert.Equal(t, 4317, opts.Port)                // default
-		assert.True(t, opts.CollectorEnable)
+		c.Check(opts.ServiceName, quicktest.Equals, "partial-service")
+		c.Check(opts.ServiceVersion, quicktest.Equals, "unknown") // default
+		c.Check(opts.Host, quicktest.Equals, "localhost")         // default
+		c.Check(opts.Port, quicktest.Equals, 4317)                // default
+		c.Check(opts.CollectorEnable, quicktest.Equals, true)
 	})
 }
 
 func TestSetup(t *testing.T) {
-	t.Run("successful setup", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("successful setup", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		result, err := Setup(ctx,
@@ -62,49 +62,49 @@ func TestSetup(t *testing.T) {
 			WithServiceVersion("1.0.0"),
 		)
 
-		require.NoError(t, err)
-		require.NotNil(t, result)
-		require.NotNil(t, result.TracerProvider)
-		require.NotNil(t, result.LoggerProvider)
-		require.NotNil(t, result.MeterProvider)
-		require.NotNil(t, result.Cleanup)
+		c.Check(err, quicktest.IsNil)
+		c.Check(result, quicktest.Not(quicktest.IsNil))
+		c.Check(result.TracerProvider, quicktest.Not(quicktest.IsNil))
+		c.Check(result.LoggerProvider, quicktest.Not(quicktest.IsNil))
+		c.Check(result.MeterProvider, quicktest.Not(quicktest.IsNil))
+		c.Check(result.Cleanup, quicktest.Not(quicktest.IsNil))
 
 		// Verify global providers are set
 		globalTracerProvider := otel.GetTracerProvider()
-		assert.Equal(t, result.TracerProvider, globalTracerProvider)
+		c.Check(result.TracerProvider, quicktest.Equals, globalTracerProvider)
 
 		// Test that providers work
 		tracer := result.TracerProvider.Tracer("test-tracer")
-		assert.NotNil(t, tracer)
+		c.Check(tracer, quicktest.Not(quicktest.IsNil))
 
 		logger := result.LoggerProvider.Logger("test-logger")
-		assert.NotNil(t, logger)
+		c.Check(logger, quicktest.Not(quicktest.IsNil))
 
 		meter := result.MeterProvider.Meter("test-meter")
-		assert.NotNil(t, meter)
+		c.Check(meter, quicktest.Not(quicktest.IsNil))
 
 		// Cleanup
 		err = result.Cleanup()
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 
-	t.Run("setup with default options", func(t *testing.T) {
+	qt.Run("setup with default options", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		result, err := Setup(ctx)
 
-		require.NoError(t, err)
-		require.NotNil(t, result)
-		require.NotNil(t, result.TracerProvider)
-		require.NotNil(t, result.LoggerProvider)
-		require.NotNil(t, result.MeterProvider)
+		c.Check(err, quicktest.IsNil)
+		c.Check(result, quicktest.Not(quicktest.IsNil))
+		c.Check(result.TracerProvider, quicktest.Not(quicktest.IsNil))
+		c.Check(result.LoggerProvider, quicktest.Not(quicktest.IsNil))
+		c.Check(result.MeterProvider, quicktest.Not(quicktest.IsNil))
 
 		// Cleanup
 		err = result.Cleanup()
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 
-	t.Run("setup with all custom options", func(t *testing.T) {
+	qt.Run("setup with all custom options", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		result, err := Setup(ctx,
@@ -115,17 +115,19 @@ func TestSetup(t *testing.T) {
 			WithCollectorEnable(false),
 		)
 
-		require.NoError(t, err)
-		require.NotNil(t, result)
+		c.Check(err, quicktest.IsNil)
+		c.Check(result, quicktest.Not(quicktest.IsNil))
 
 		// Cleanup
 		err = result.Cleanup()
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupWithCleanup(t *testing.T) {
-	t.Run("successful setup with cleanup", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("successful setup with cleanup", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		cleanup := SetupWithCleanup(ctx,
@@ -133,15 +135,15 @@ func TestSetupWithCleanup(t *testing.T) {
 			WithServiceVersion("1.0.0"),
 		)
 
-		require.NotNil(t, cleanup)
+		c.Check(cleanup, quicktest.Not(quicktest.IsNil))
 
 		// Verify providers are set globally
 		tracerProvider := otel.GetTracerProvider()
-		assert.NotNil(t, tracerProvider)
+		c.Check(tracerProvider, quicktest.Not(quicktest.IsNil))
 
 		// Test that providers work
 		tracer := tracerProvider.Tracer("test-tracer")
-		assert.NotNil(t, tracer)
+		c.Check(tracer, quicktest.Not(quicktest.IsNil))
 
 		// Call cleanup
 		cleanup()
@@ -150,93 +152,99 @@ func TestSetupWithCleanup(t *testing.T) {
 		// Note: We can't easily verify this without accessing internal state
 	})
 
-	t.Run("setup with panic on failure", func(t *testing.T) {
+	qt.Run("setup with panic on failure", func(c *quicktest.C) {
 		ctx := context.Background()
 
-		// This should not panic with valid options
-		assert.NotPanics(t, func() {
-			cleanup := SetupWithCleanup(ctx, WithServiceName("panic-test"))
-			cleanup()
-		})
+		// Simply call the function - if it panics, the test will fail
+		cleanup := SetupWithCleanup(ctx, WithServiceName("panic-test"))
+		cleanup()
 	})
 }
 
 func TestSetupResult(t *testing.T) {
-	t.Run("setup result structure", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("setup result structure", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		result, err := Setup(ctx, WithServiceName("result-test"))
-		require.NoError(t, err)
-		require.NotNil(t, result)
+		c.Check(err, quicktest.IsNil)
+		c.Check(result, quicktest.Not(quicktest.IsNil))
 
 		// Verify all fields are properly set
-		assert.IsType(t, &trace.TracerProvider{}, result.TracerProvider)
-		assert.IsType(t, &log.LoggerProvider{}, result.LoggerProvider)
-		assert.IsType(t, &metric.MeterProvider{}, result.MeterProvider)
-		assert.IsType(t, (func() error)(nil), result.Cleanup)
+		c.Check(result.TracerProvider, quicktest.Not(quicktest.IsNil))
+		c.Check(result.LoggerProvider, quicktest.Not(quicktest.IsNil))
+		c.Check(result.MeterProvider, quicktest.Not(quicktest.IsNil))
+		c.Check(result.Cleanup, quicktest.Not(quicktest.IsNil))
 
 		// Cleanup
 		err = result.Cleanup()
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupErrorHandling(t *testing.T) {
-	t.Run("context cancellation", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("context cancellation", func(c *quicktest.C) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel() // Cancel immediately
 
 		result, err := Setup(ctx, WithServiceName("cancel-test"))
 
 		// Should still work even with cancelled context
-		require.NoError(t, err)
-		require.NotNil(t, result)
+		c.Check(err, quicktest.IsNil)
+		c.Check(result, quicktest.Not(quicktest.IsNil))
 
 		// Cleanup should fail due to cancelled context
 		err = result.Cleanup()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "cleanup errors")
+		c.Check(err, quicktest.Not(quicktest.IsNil))
+		c.Check(err.Error(), quicktest.Contains, "cleanup errors")
 	})
 
-	t.Run("invalid port number", func(t *testing.T) {
+	qt.Run("invalid port number", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		// Invalid port should still work since validation happens later
 		result, err := Setup(ctx, WithPort(-1))
-		require.NoError(t, err)
-		require.NotNil(t, result)
+		c.Check(err, quicktest.IsNil)
+		c.Check(result, quicktest.Not(quicktest.IsNil))
 
 		// Cleanup
 		err = result.Cleanup()
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupMultipleCalls(t *testing.T) {
-	t.Run("multiple setup calls", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("multiple setup calls", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		// First setup
 		result1, err := Setup(ctx, WithServiceName("multi1"))
-		require.NoError(t, err)
-		require.NotNil(t, result1)
+		c.Check(err, quicktest.IsNil)
+		c.Check(result1, quicktest.Not(quicktest.IsNil))
 
 		// Second setup
 		result2, err := Setup(ctx, WithServiceName("multi2"))
-		require.NoError(t, err)
-		require.NotNil(t, result2)
+		c.Check(err, quicktest.IsNil)
+		c.Check(result2, quicktest.Not(quicktest.IsNil))
 
 		// Cleanup both
 		err = result1.Cleanup()
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 
 		err = result2.Cleanup()
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupConcurrentAccess(t *testing.T) {
-	t.Run("concurrent setup calls", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("concurrent setup calls", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		// Test concurrent setup calls
@@ -246,7 +254,7 @@ func TestSetupConcurrentAccess(t *testing.T) {
 			result, err := Setup(ctx, WithServiceName("concurrent1"))
 			if err == nil && result != nil {
 				err = result.Cleanup()
-				assert.NoError(t, err)
+				c.Check(err, quicktest.IsNil)
 			}
 			done <- true
 		}()
@@ -255,7 +263,7 @@ func TestSetupConcurrentAccess(t *testing.T) {
 			result, err := Setup(ctx, WithServiceName("concurrent2"))
 			if err == nil && result != nil {
 				err = result.Cleanup()
-				assert.NoError(t, err)
+				c.Check(err, quicktest.IsNil)
 			}
 			done <- true
 		}()
@@ -267,7 +275,9 @@ func TestSetupConcurrentAccess(t *testing.T) {
 }
 
 func TestSetupMemoryLeaks(t *testing.T) {
-	t.Run("memory leak prevention", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("memory leak prevention", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		// Create and destroy multiple setups to check for memory leaks
@@ -277,84 +287,90 @@ func TestSetupMemoryLeaks(t *testing.T) {
 				WithServiceVersion("1.0.0"),
 			)
 
-			require.NoError(t, err)
-			require.NotNil(t, result)
+			c.Check(err, quicktest.IsNil)
+			c.Check(result, quicktest.Not(quicktest.IsNil))
 
 			// Test that all providers work
 			tracer := result.TracerProvider.Tracer("test-tracer")
-			assert.NotNil(t, tracer)
+			c.Check(tracer, quicktest.Not(quicktest.IsNil))
 
 			logger := result.LoggerProvider.Logger("test-logger")
-			assert.NotNil(t, logger)
+			c.Check(logger, quicktest.Not(quicktest.IsNil))
 
 			meter := result.MeterProvider.Meter("test-meter")
-			assert.NotNil(t, meter)
+			c.Check(meter, quicktest.Not(quicktest.IsNil))
 
 			// Cleanup immediately
 			err = result.Cleanup()
-			assert.NoError(t, err)
+			c.Check(err, quicktest.IsNil)
 		}
 	})
 }
 
 func TestSetupIntegration(t *testing.T) {
-	t.Run("integration test with actual usage", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("integration test with actual usage", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		result, err := Setup(ctx,
 			WithServiceName("integration-test"),
 			WithServiceVersion("1.0.0"),
 		)
-		require.NoError(t, err)
-		require.NotNil(t, result)
+		c.Check(err, quicktest.IsNil)
+		c.Check(result, quicktest.Not(quicktest.IsNil))
 
 		// Test actual usage of all providers
 		tracer := result.TracerProvider.Tracer("integration-tracer")
 		ctx, span := tracer.Start(ctx, "test_span")
-		require.NotNil(t, span)
+		c.Check(span, quicktest.Not(quicktest.IsNil))
 		span.End()
 
 		meter := result.MeterProvider.Meter("integration-meter")
 		counter, err := meter.Int64Counter("test_counter")
-		require.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 		counter.Add(ctx, 1)
 
 		// Cleanup
 		err = result.Cleanup()
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 
 func TestSetupCleanupFunction(t *testing.T) {
-	t.Run("cleanup function behavior", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("cleanup function behavior", func(c *quicktest.C) {
 		ctx := context.Background()
 
 		result, err := Setup(ctx, WithServiceName("cleanup-test"))
-		require.NoError(t, err)
-		require.NotNil(t, result)
+		c.Check(err, quicktest.IsNil)
+		c.Check(result, quicktest.Not(quicktest.IsNil))
 
 		// Call cleanup once
 		err = result.Cleanup()
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 
 		// Call cleanup again - should error because providers are already shut down
 		err = result.Cleanup()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "cleanup errors")
+		c.Check(err, quicktest.Not(quicktest.IsNil))
+		c.Check(err.Error(), quicktest.Contains, "cleanup errors")
 	})
 }
 
 func TestSetupWithContextTODO(t *testing.T) {
-	t.Run("context TODO", func(t *testing.T) {
+	qt := quicktest.New(t)
+
+	qt.Run("context TODO", func(c *quicktest.C) {
 		// This should work as context.Background() is used internally
 		result, err := Setup(context.TODO())
 
-		require.NoError(t, err)
-		require.NotNil(t, result)
+		c.Check(err, quicktest.IsNil)
+		c.Check(result, quicktest.Not(quicktest.IsNil))
 
 		// Cleanup
 		err = result.Cleanup()
-		assert.NoError(t, err)
+		c.Check(err, quicktest.IsNil)
 	})
 }
 

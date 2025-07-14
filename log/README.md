@@ -4,7 +4,7 @@ Structured logging with Zap and OpenTelemetry integration.
 
 `x/log` provides a comprehensive logging solution that combines the performance and flexibility of Zap with OpenTelemetry tracing integration. It offers colored JSON output, configurable log levels, and seamless integration with Temporal workflows.
 
-## Overview
+## 1. Overview
 
 The `x/log` package provides a structured logging solution that:
 
@@ -14,10 +14,11 @@ The `x/log` package provides a structured logging solution that:
 4. **Configurable verbosity** - Debug and production modes with appropriate log levels
 5. **Temporal compatibility** - Adapter for Temporal SDK logging interface
 6. **Dual output streams** - Info/debug logs to stdout, warnings/errors to stderr
+7. **Thread-safe singleton** - Efficient logger initialization with sync.Once
 
-## Core Concepts
+## 2. Core Concepts
 
-### Log Levels and Output Streams
+### 2.1 Log Levels and Output Streams
 
 The package uses different output streams based on log severity:
 
@@ -29,7 +30,7 @@ The package uses different output streams based on log severity:
 // Production mode: Info → stdout, Warn + Error + Fatal → stderr
 ```
 
-### OpenTelemetry Integration
+### 2.2 OpenTelemetry Integration
 
 Logs are automatically injected into OpenTelemetry traces when a span is active:
 
@@ -39,9 +40,16 @@ span.AddEvent("log", trace.WithAttributes(
     attribute.String("log.severity", entry.Level.String()),
     attribute.String("log.message", entry.Message),
 ))
+
+// Error logs also set span status
+if entry.Level >= zap.ErrorLevel {
+    span.SetStatus(codes.Error, entry.Message)
+} else {
+    span.SetStatus(codes.Ok, entry.Message)
+}
 ```
 
-### Colored JSON Output
+### 2.3 Colored JSON Output
 
 Log entries are color-coded for enhanced readability:
 
@@ -51,9 +59,26 @@ Log entries are color-coded for enhanced readability:
 - **Error**: Red (`\x1b[31m`)
 - **Fatal**: Magenta (`\x1b[35m`)
 
-## API Reference
+### 2.4 Thread-Safe Singleton Pattern
 
-### Core Functions
+The logger uses a thread-safe singleton pattern with `sync.Once` to ensure efficient initialization:
+
+```go
+var once sync.Once
+var core zapcore.Core
+
+func GetZapLogger(ctx context.Context) (*zap.Logger, error) {
+    var err error
+    once.Do(func() {
+        // Logger configuration happens only once
+    })
+    return logger, err
+}
+```
+
+## 3. API Reference
+
+### 3.1 Core Functions
 
 #### `GetZapLogger(ctx context.Context) (*zap.Logger, error)`
 
@@ -69,11 +94,12 @@ logger.Info("Application started")
 
 **Features:**
 
-- Thread-safe singleton initialization
+- Thread-safe singleton initialization using `sync.Once`
 - Automatic OpenTelemetry trace integration
 - Configurable log levels based on `Debug` flag
 - Colored JSON output
-- Caller information
+- Caller information with `zap.AddCaller()`
+- Optional stack traces for error logs (commented out by default)
 
 #### `Debug bool`
 
@@ -88,7 +114,7 @@ logger, _ := log.GetZapLogger(ctx)
 logger.Debug("Debug information")  // Will be logged
 ```
 
-### Encoder Components
+### 3.2 Encoder Components
 
 #### `ColoredJSONEncoder`
 
@@ -100,7 +126,7 @@ encoder := log.NewColoredJSONEncoder(zapcore.NewJSONEncoder(config))
 
 **Methods:**
 
-- `Clone()` - Creates a copy of the encoder
+- `Clone()` - Creates a copy of the encoder with the same underlying encoder
 - `EncodeEntry()` - Encodes log entries with color codes
 
 #### `getJSONEncoderConfig(development bool) zapcore.EncoderConfig`
@@ -108,14 +134,20 @@ encoder := log.NewColoredJSONEncoder(zapcore.NewJSONEncoder(config))
 Creates encoder configuration based on environment:
 
 ```go
-// Development mode: Full caller information
+// Development mode: Full caller information with FullCallerEncoder
 config := getJSONEncoderConfig(true)
 
 // Production mode: Standard caller information
 config := getJSONEncoderConfig(false)
 ```
 
-### Temporal Integration
+**Configuration includes:**
+
+- `EncodeLevel`: `CapitalLevelEncoder` for both modes
+- `EncodeTime`: `ISO8601TimeEncoder` for both modes
+- `EncodeCaller`: `FullCallerEncoder` for development, standard for production
+
+### 3.3 Temporal Integration
 
 #### `ZapAdapter`
 
@@ -134,9 +166,15 @@ temporalLogger := log.NewZapAdapter(zapLogger)
 - `Error(msg string, keyvals ...any)` - Log error message
 - `With(keyvals ...any) log.Logger` - Create logger with additional fields
 
-## Usage Examples
+**Features:**
 
-### Basic Logging
+- Automatic field conversion from key-value pairs to Zap fields
+- Caller skip configuration to exclude adapter from stack traces
+- Error handling for malformed key-value pairs
+
+## 4. Usage Examples
+
+### 4.1 Basic Logging
 
 ```go
 package main
@@ -165,7 +203,7 @@ func main() {
 }
 ```
 
-### OpenTelemetry Tracing and Logging Integration
+### 4.2 OpenTelemetry Tracing and Logging Integration
 
 ```go
 package service
@@ -193,6 +231,7 @@ func (s *Service) ProcessRequest(ctx context.Context, req *Request) error {
     // Process the request...
     if err := s.validate(req); err != nil {
         logger.Error("Validation failed", zap.Error(err))
+        // This error log will also set span status to Error
         return err
     }
 
@@ -201,7 +240,7 @@ func (s *Service) ProcessRequest(ctx context.Context, req *Request) error {
 }
 ```
 
-### Temporal Workflow Integration
+### 4.3 Temporal Workflow Integration
 
 ```go
 package workflow
@@ -214,7 +253,8 @@ import (
 
 func ProcessOrderWorkflow(ctx workflow.Context, order Order) error {
     // Get Temporal logger
-    logger := log.NewZapAdapter(log.GetZapLogger(ctx))
+    zapLogger, _ := log.GetZapLogger(ctx)
+    logger := log.NewZapAdapter(zapLogger)
 
     logger.Info("Starting order processing",
         "order_id", order.ID,
@@ -234,7 +274,7 @@ func ProcessOrderWorkflow(ctx workflow.Context, order Order) error {
 }
 ```
 
-### Structured Logging with Fields
+### 4.4 Structured Logging with Fields
 
 ```go
 func (h *Handler) HandleRequest(ctx context.Context, req *Request) (*Response, error) {
@@ -274,7 +314,7 @@ func (h *Handler) HandleRequest(ctx context.Context, req *Request) (*Response, e
 }
 ```
 
-### Logger with Context Fields
+### 4.5 Logger with Context Fields
 
 ```go
 func (s *Service) ProcessUser(ctx context.Context, userID string) error {
@@ -299,9 +339,9 @@ func (s *Service) ProcessUser(ctx context.Context, userID string) error {
 }
 ```
 
-## Best Practices
+## 5. Best Practices
 
-### 1. Context Usage
+### 5.1 Context Usage
 
 - **Always pass context**: Use context to enable OpenTelemetry integration
 - **Create spans appropriately**: Create spans for significant operations
@@ -323,7 +363,7 @@ func (s *Service) Process(data []byte) error {
 }
 ```
 
-### 2. Log Level Selection
+### 5.2 Log Level Selection
 
 - **Debug**: Detailed information for debugging
 - **Info**: General application flow and state changes
@@ -340,7 +380,7 @@ logger.Error("Failed to send notification", zap.Error(err))
 logger.Fatal("Cannot bind to port", zap.Int("port", port))
 ```
 
-### 3. Structured Logging
+### 5.3 Structured Logging
 
 - **Use structured fields**: Prefer structured fields over string interpolation
 - **Include relevant context**: Add fields that help with debugging and monitoring
@@ -359,7 +399,7 @@ logger.Info("User logged in",
 logger.Info(fmt.Sprintf("User %s logged in from %s", user.ID, req.RemoteAddr))
 ```
 
-### 4. Error Logging
+### 5.4 Error Logging
 
 - **Include error details**: Always include the error object
 - **Add context**: Provide additional context about the error
@@ -378,7 +418,7 @@ if err := db.Query(query).Scan(&result); err != nil {
 }
 ```
 
-### 5. Performance Considerations
+### 5.5 Performance Considerations
 
 - **Use field types appropriately**: Use specific field types (zap.String, zap.Int) instead of zap.Any when possible
 - **Avoid expensive operations**: Don't perform expensive operations in log statements
@@ -394,7 +434,7 @@ if logger.Core().Enabled(zapcore.DebugLevel) {
 logger.Debug("Expensive debug info", zap.String("data", expensiveOperation()))
 ```
 
-### 6. Temporal Integration
+### 5.6 Temporal Integration
 
 - **Use ZapAdapter**: Use the provided adapter for Temporal workflows
 - **Include workflow context**: Log workflow-specific information
@@ -402,7 +442,8 @@ logger.Debug("Expensive debug info", zap.String("data", expensiveOperation()))
 
 ```go
 func MyWorkflow(ctx workflow.Context, input Input) error {
-    logger := log.NewZapAdapter(log.GetZapLogger(ctx))
+    zapLogger, _ := log.GetZapLogger(ctx)
+    logger := log.NewZapAdapter(zapLogger)
 
     logger.Info("Workflow started", "input", input)
 
@@ -417,9 +458,9 @@ func MyWorkflow(ctx workflow.Context, input Input) error {
 }
 ```
 
-## Configuration
+## 6. Configuration
 
-### Environment-Based Configuration
+### 6.1 Environment-Based Configuration
 
 ```go
 // Development environment
@@ -431,7 +472,7 @@ log.Debug = false
 logger, _ := log.GetZapLogger(ctx)
 ```
 
-### Custom Encoder Configuration
+### 6.2 Custom Encoder Configuration
 
 ```go
 // Custom encoder configuration
@@ -442,9 +483,18 @@ config.EncodeLevel = zapcore.CapitalLevelEncoder
 encoder := log.NewColoredJSONEncoder(zapcore.NewJSONEncoder(config))
 ```
 
-## Migration Guide
+### 6.3 Enabling Stack Traces
 
-### From Standard Logging
+To enable stack traces for error logs, uncomment the following line in `GetZapLogger`:
+
+```go
+// In logger.go, uncomment this line:
+zap.AddStacktrace(zapcore.ErrorLevel),
+```
+
+## 7. Migration Guide
+
+### 7.1 From Standard Logging
 
 **Before:**
 
@@ -465,7 +515,7 @@ logger.Info("Processing request", zap.String("request_id", requestID))
 logger.Error("Operation failed", zap.Error(err))
 ```
 
-### From Other Structured Loggers
+### 7.2 From Other Structured Loggers
 
 **Before:**
 
@@ -490,7 +540,7 @@ logger.Info("User logged in",
 )
 ```
 
-### Adding OpenTelemetry Integration
+### 7.3 Adding OpenTelemetry Integration
 
 **Before:**
 
@@ -510,15 +560,16 @@ logger, _ := log.GetZapLogger(ctx)
 logger.Info("Processing request") // Automatically added to span
 ```
 
-## Performance Considerations
+## 8. Performance Considerations
 
 - **Minimal overhead**: Zap provides high-performance logging with minimal overhead
 - **Structured output**: JSON output is efficient and machine-readable
 - **Color codes**: Color encoding adds minimal overhead
 - **OpenTelemetry integration**: Trace integration is lightweight and conditional
 - **Memory efficient**: Buffer pooling reduces memory allocations
+- **Thread-safe initialization**: Singleton pattern ensures efficient setup
 
-## Contributing
+## 9. Contributing
 
 When adding new features or modifications:
 
@@ -528,6 +579,6 @@ When adding new features or modifications:
 4. **Follow patterns**: Use established patterns for consistency
 5. **Consider backward compatibility**: Maintain compatibility with existing usage
 
-## License
+## 10. License
 
 This package is part of the Instill AI x library and follows the same licensing terms.

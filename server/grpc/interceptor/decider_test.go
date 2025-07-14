@@ -2,13 +2,19 @@ package interceptor
 
 import (
 	"context"
+	"errors"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/frankban/quicktest"
+	"github.com/gojuno/minimock/v3"
 	"google.golang.org/grpc"
+
+	mockserver "github.com/instill-ai/x/mock/server"
 )
 
 func TestDecideLogGRPCRequest(t *testing.T) {
+	qt := quicktest.New(t)
+
 	tests := []struct {
 		name                  string
 		fullMethod            string
@@ -45,7 +51,7 @@ func TestDecideLogGRPCRequest(t *testing.T) {
 			name:                  "with error, pattern matches, should log",
 			fullMethod:            "test.PublicService/liveness",
 			methodExcludePatterns: []string{"*PublicService/.*ness$"},
-			err:                   assert.AnError,
+			err:                   errors.New("test error"),
 			expectedShouldLog:     true,
 			description:           "when there is an error, should always log regardless of patterns",
 		},
@@ -68,14 +74,16 @@ func TestDecideLogGRPCRequest(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt.Run(tt.name, func(c *quicktest.C) {
 			result := decideLogGRPCRequest(tt.fullMethod, tt.methodExcludePatterns, tt.err)
-			assert.Equal(t, tt.expectedShouldLog, result, tt.description)
+			c.Check(result, quicktest.Equals, tt.expectedShouldLog)
 		})
 	}
 }
 
 func TestDeciderUnaryServerInterceptor(t *testing.T) {
+	qt := quicktest.New(t)
+
 	tests := []struct {
 		name                  string
 		methodExcludePatterns []string
@@ -114,7 +122,7 @@ func TestDeciderUnaryServerInterceptor(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt.Run(tt.name, func(c *quicktest.C) {
 			interceptor := DeciderUnaryServerInterceptor(tt.methodExcludePatterns)
 
 			ctx := context.Background()
@@ -130,13 +138,15 @@ func TestDeciderUnaryServerInterceptor(t *testing.T) {
 			}
 
 			_, err := interceptor(ctx, req, info, handler)
-			assert.NoError(t, err)
-			assert.Equal(t, tt.expectedShouldLog, shouldLogValue, tt.description)
+			c.Check(err, quicktest.IsNil)
+			c.Check(shouldLogValue, quicktest.Equals, tt.expectedShouldLog)
 		})
 	}
 }
 
 func TestDeciderStreamServerInterceptor(t *testing.T) {
+	qt := quicktest.New(t)
+
 	tests := []struct {
 		name                  string
 		methodExcludePatterns []string
@@ -168,11 +178,16 @@ func TestDeciderStreamServerInterceptor(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt.Run(tt.name, func(c *quicktest.C) {
 			interceptor := DeciderStreamServerInterceptor(tt.methodExcludePatterns)
 
+			mc := minimock.NewController(t)
+			stream := mockserver.NewServerStreamMock(mc)
+
+			// Add this line to set up the Context expectation
 			ctx := context.Background()
-			stream := &MockServerStream{ctx: ctx}
+			stream.ContextMock.Expect().Return(ctx)
+
 			info := &grpc.StreamServerInfo{
 				FullMethod: tt.fullMethod,
 			}
@@ -184,13 +199,15 @@ func TestDeciderStreamServerInterceptor(t *testing.T) {
 			}
 
 			err := interceptor(nil, stream, info, handler)
-			assert.NoError(t, err)
-			assert.Equal(t, tt.expectedShouldLog, shouldLogValue, tt.description)
+			c.Check(err, quicktest.IsNil)
+			c.Check(shouldLogValue, quicktest.Equals, tt.expectedShouldLog)
 		})
 	}
 }
 
 func TestShouldLogFromContext(t *testing.T) {
+	qt := quicktest.New(t)
+
 	tests := []struct {
 		name           string
 		ctx            context.Context
@@ -224,24 +241,41 @@ func TestShouldLogFromContext(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt.Run(tt.name, func(c *quicktest.C) {
 			result := ShouldLogFromContext(tt.ctx)
-			assert.Equal(t, tt.expectedResult, result, tt.description)
+			c.Check(result, quicktest.Equals, tt.expectedResult)
 		})
 	}
 }
 
 func TestDefaultMethodExcludePatterns(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test that default patterns are correctly defined
-	assert.Len(t, DefaultMethodExcludePatterns, 2)
-	assert.Contains(t, DefaultMethodExcludePatterns, "*PublicService/.*ness$")
-	assert.Contains(t, DefaultMethodExcludePatterns, "*PrivateService/.*$")
+	qt.Check(len(DefaultMethodExcludePatterns), quicktest.Equals, 2)
+
+	// Check if patterns contain expected values
+	hasPublicPattern := false
+	hasPrivatePattern := false
+	for _, pattern := range DefaultMethodExcludePatterns {
+		if pattern == "*PublicService/.*ness$" {
+			hasPublicPattern = true
+		}
+		if pattern == "*PrivateService/.*$" {
+			hasPrivatePattern = true
+		}
+	}
+	qt.Check(hasPublicPattern, quicktest.IsTrue)
+	qt.Check(hasPrivatePattern, quicktest.IsTrue)
 }
 
 // Test that the deciderServerStream wrapper works correctly
 func TestDeciderServerStream(t *testing.T) {
+	qt := quicktest.New(t)
+
 	originalCtx := context.Background()
-	originalStream := &MockServerStream{ctx: originalCtx}
+	mc := minimock.NewController(t)
+	originalStream := mockserver.NewServerStreamMock(mc)
 
 	wrappedStream := &deciderServerStream{
 		ServerStream: originalStream,
@@ -251,15 +285,17 @@ func TestDeciderServerStream(t *testing.T) {
 	// Test that Context() returns the wrapped context
 	wrappedCtx := wrappedStream.Context()
 	shouldLog := ShouldLogFromContext(wrappedCtx)
-	assert.False(t, shouldLog)
+	qt.Check(shouldLog, quicktest.IsFalse)
 
 	// Test that the original context is not affected
 	originalShouldLog := ShouldLogFromContext(originalCtx)
-	assert.True(t, originalShouldLog) // should default to true
+	qt.Check(originalShouldLog, quicktest.IsTrue) // should default to true
 }
 
 // Test integration between interceptors and context
 func TestInterceptorIntegration(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test that the unary interceptor properly sets context
 	interceptor := DeciderUnaryServerInterceptor([]string{"*TestService/.*$"})
 
@@ -274,11 +310,11 @@ func TestInterceptorIntegration(t *testing.T) {
 	}
 
 	_, err := interceptor(ctx, req, info, handler)
-	assert.NoError(t, err)
+	qt.Check(err, quicktest.IsNil)
 
 	// Verify the context was modified
 	shouldLog := ShouldLogFromContext(capturedCtx)
-	assert.True(t, shouldLog) // should match the pattern
+	qt.Check(shouldLog, quicktest.IsTrue) // should match the pattern
 
 	// Test with a method that doesn't match
 	info2 := &grpc.UnaryServerInfo{FullMethod: "test.OtherService/method"}
@@ -289,8 +325,8 @@ func TestInterceptorIntegration(t *testing.T) {
 	}
 
 	_, err = interceptor(ctx, req, info2, handler2)
-	assert.NoError(t, err)
+	qt.Check(err, quicktest.IsNil)
 
 	shouldLog2 := ShouldLogFromContext(capturedCtx2)
-	assert.True(t, shouldLog2) // should not match the pattern, but still log
+	qt.Check(shouldLog2, quicktest.IsTrue) // should not match the pattern, but still log
 }

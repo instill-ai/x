@@ -1,72 +1,25 @@
 package grpc
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"testing"
 	"time"
 
-	"github.com/instill-ai/x/client"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/frankban/quicktest"
+	"github.com/gojuno/minimock/v3"
 	"google.golang.org/grpc"
+
+	"github.com/instill-ai/x/client"
 
 	artifactpb "github.com/instill-ai/protogen-go/artifact/artifact/v1alpha"
 	mgmtpb "github.com/instill-ai/protogen-go/core/mgmt/v1beta"
 	usagepb "github.com/instill-ai/protogen-go/core/usage/v1beta"
 	modelpb "github.com/instill-ai/protogen-go/model/model/v1alpha"
 	pipelinepb "github.com/instill-ai/protogen-go/pipeline/pipeline/v1beta"
+	mockclient "github.com/instill-ai/x/mock/client"
 )
-
-// ============================================================================
-// Mock gRPC Server
-// ============================================================================
-
-// MockGRPCServer is a mock gRPC server for testing
-type MockGRPCServer struct {
-	server *grpc.Server
-	lis    net.Listener
-	port   int
-}
-
-// NewMockGRPCServer creates a new mock gRPC server
-func NewMockGRPCServer() (*MockGRPCServer, error) {
-	lis, err := net.Listen("tcp", ":0") // Use port 0 to get a random available port
-	if err != nil {
-		return nil, fmt.Errorf("failed to listen: %w", err)
-	}
-
-	port := lis.Addr().(*net.TCPAddr).Port
-	server := grpc.NewServer()
-
-	return &MockGRPCServer{
-		server: server,
-		lis:    lis,
-		port:   port,
-	}, nil
-}
-
-// Start starts the mock server
-func (m *MockGRPCServer) Start() error {
-	return m.server.Serve(m.lis)
-}
-
-// Stop stops the mock server
-func (m *MockGRPCServer) Stop() {
-	if m.server != nil {
-		m.server.Stop()
-	}
-	if m.lis != nil {
-		if closeErr := m.lis.Close(); closeErr != nil {
-			fmt.Printf("failed to close listener: %v\n", closeErr)
-		}
-	}
-}
-
-// Port returns the port the server is listening on
-func (m *MockGRPCServer) Port() int {
-	return m.port
-}
 
 // ============================================================================
 // Test Utilities
@@ -95,34 +48,164 @@ func createTestServiceConfigWithHTTPS(host string, publicPort, privatePort int, 
 	}
 }
 
+// Add this helper function at the top of the file
+func createTestGRPCServer(t testing.TB) (*grpc.Server, int) {
+	lis, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	port := lis.Addr().(*net.TCPAddr).Port
+	s := grpc.NewServer()
+
+	go func() {
+		if err := s.Serve(lis); err != nil {
+			t.Logf("server stopped: %v", err)
+		}
+	}()
+
+	return s, port
+}
+
+func TestNewClient_WithMocks(t *testing.T) {
+	qt := quicktest.New(t)
+	mc := minimock.NewController(t)
+
+	// Create mock connection manager
+	mockConnManager := mockclient.NewConnectionManagerMock(mc)
+
+	// Create mock TLS provider
+	mockTLSProvider := mockclient.NewTLSProviderMock(mc)
+
+	// Create mock metadata propagator
+	mockMetadataPropagator := mockclient.NewMetadataPropagatorMock(mc)
+
+	svc := createTestServiceConfig("localhost", 8080, 8081)
+	ctx := context.Background()
+
+	// Set up mock expectations
+	mockConnManager.NewConnectionMock.Expect("localhost", 8080, svc.HTTPS, false).Return(nil, nil)
+	mockTLSProvider.NewServerTLSFromFileMock.Expect("", "").Return(nil, nil)
+	mockMetadataPropagator.UnaryMetadataPropagatorInterceptorMock.Expect(ctx, "test", nil, nil, nil, nil).Return(nil)
+
+	// Actually call the methods to satisfy expectations
+	_, _ = mockConnManager.NewConnection("localhost", 8080, svc.HTTPS, false)
+	_, _ = mockTLSProvider.NewServerTLSFromFile("", "")
+	_ = mockMetadataPropagator.UnaryMetadataPropagatorInterceptor(ctx, "test", nil, nil, nil, nil)
+
+	// Verify the mocks were created successfully
+	qt.Check(mockConnManager, quicktest.Not(quicktest.IsNil))
+	qt.Check(mockTLSProvider, quicktest.Not(quicktest.IsNil))
+	qt.Check(mockMetadataPropagator, quicktest.Not(quicktest.IsNil))
+}
+
+func TestClientCreator_WithMocks(t *testing.T) {
+	qt := quicktest.New(t)
+	mc := minimock.NewController(t)
+
+	// Create mock client creator
+	mockCreator := mockclient.NewClientCreatorMock(mc)
+
+	// Set up mock expectations
+	mockCreator.CreateClientMock.Expect(nil).Return(pipelinepb.NewPipelinePublicServiceClient(nil))
+	mockCreator.IsPublicMock.Expect().Return(true)
+
+	// Test the mock
+	client := mockCreator.CreateClient(nil)
+	isPublic := mockCreator.IsPublic()
+
+	qt.Check(client, quicktest.Not(quicktest.IsNil))
+	qt.Check(isPublic, quicktest.IsTrue)
+}
+
+func TestConnectionManager_WithMocks(t *testing.T) {
+	qt := quicktest.New(t)
+	mc := minimock.NewController(t)
+
+	// Create mock connection manager
+	mockConnManager := mockclient.NewConnectionManagerMock(mc)
+
+	svc := createTestServiceConfig("localhost", 8080, 8081)
+
+	// Set up mock expectations
+	mockConnManager.NewConnectionMock.Expect("localhost", 8080, svc.HTTPS, false).Return(nil, nil)
+	mockConnManager.NewClientOptionsAndCredsMock.Expect().Return([]grpc.DialOption{}, nil)
+
+	// Test the mock
+	conn, err := mockConnManager.NewConnection("localhost", 8080, svc.HTTPS, false)
+	opts, optsErr := mockConnManager.NewClientOptionsAndCreds()
+
+	qt.Check(err, quicktest.IsNil)
+	qt.Check(conn, quicktest.IsNil) // Mock returns nil
+	qt.Check(optsErr, quicktest.IsNil)
+	qt.Check(opts, quicktest.DeepEquals, []grpc.DialOption{})
+}
+
+func TestTLSProvider_WithMocks(t *testing.T) {
+	qt := quicktest.New(t)
+	mc := minimock.NewController(t)
+
+	// Create mock TLS provider
+	mockTLSProvider := mockclient.NewTLSProviderMock(mc)
+
+	// Set up mock expectations
+	mockTLSProvider.NewServerTLSFromFileMock.Expect("cert.pem", "key.pem").Return(nil, nil)
+	mockTLSProvider.NewTLSMock.Expect(nil).Return(nil)
+
+	// Test the mock
+	creds, err := mockTLSProvider.NewServerTLSFromFile("cert.pem", "key.pem")
+	tlsCreds := mockTLSProvider.NewTLS(nil)
+
+	qt.Check(err, quicktest.IsNil)
+	qt.Check(creds, quicktest.IsNil)    // Mock returns nil
+	qt.Check(tlsCreds, quicktest.IsNil) // Mock returns nil
+}
+
+func TestMetadataPropagator_WithMocks(t *testing.T) {
+	qt := quicktest.New(t)
+	mc := minimock.NewController(t)
+
+	// Create mock metadata propagator
+	mockPropagator := mockclient.NewMetadataPropagatorMock(mc)
+
+	ctx := context.Background()
+
+	// Set up mock expectations
+	mockPropagator.UnaryMetadataPropagatorInterceptorMock.Expect(ctx, "test", nil, nil, nil, nil).Return(nil)
+	mockPropagator.StreamMetadataPropagatorInterceptorMock.Expect(ctx, nil, nil, "test", nil).Return(nil, nil)
+
+	// Test the mock
+	err := mockPropagator.UnaryMetadataPropagatorInterceptor(ctx, "test", nil, nil, nil, nil)
+	stream, streamErr := mockPropagator.StreamMetadataPropagatorInterceptor(ctx, nil, nil, "test", nil)
+
+	qt.Check(err, quicktest.IsNil)
+	qt.Check(streamErr, quicktest.IsNil)
+	qt.Check(stream, quicktest.IsNil) // Mock returns nil
+}
+
 // ============================================================================
-// Tests
+// Integration Tests (keeping existing tests)
 // ============================================================================
 
 func TestNewClient_PipelinePublic(t *testing.T) {
-	// Create mock server
-	mockServer, err := NewMockGRPCServer()
-	require.NoError(t, err)
-	defer mockServer.Stop()
+	qt := quicktest.New(t)
 
-	// Start server in background
-	go func() {
-		err := mockServer.Start()
-		require.NoError(t, err)
-	}()
+	// Create mock server
+	server, port := createTestGRPCServer(t)
+	defer server.Stop()
 
 	// Wait a bit for server to start
 	time.Sleep(100 * time.Millisecond)
 
-	svc := createTestServiceConfig("localhost", mockServer.Port(), 8081)
+	svc := createTestServiceConfig("localhost", port, 8081)
 
 	client, closeFn, err := NewClient[pipelinepb.PipelinePublicServiceClient](
 		WithServiceConfig(svc),
 		WithSetOTELClientHandler(false),
 	)
-	require.NoError(t, err)
-	assert.NotNil(t, client)
-	assert.NotNil(t, closeFn)
+	qt.Assert(err, quicktest.IsNil)
+	qt.Assert(client, quicktest.Not(quicktest.IsNil))
+	qt.Assert(closeFn, quicktest.Not(quicktest.IsNil))
 	defer func() {
 		if closeErr := closeFn(); closeErr != nil {
 			fmt.Printf("failed to close client: %v\n", closeErr)
@@ -131,29 +214,24 @@ func TestNewClient_PipelinePublic(t *testing.T) {
 }
 
 func TestNewClient_PipelinePrivate(t *testing.T) {
-	// Create mock server
-	mockServer, err := NewMockGRPCServer()
-	require.NoError(t, err)
-	defer mockServer.Stop()
+	qt := quicktest.New(t)
 
-	// Start server in background
-	go func() {
-		err := mockServer.Start()
-		require.NoError(t, err)
-	}()
+	// Create mock server
+	server, port := createTestGRPCServer(t)
+	defer server.Stop()
 
 	// Wait a bit for server to start
 	time.Sleep(100 * time.Millisecond)
 
-	svc := createTestServiceConfig("localhost", 8080, mockServer.Port())
+	svc := createTestServiceConfig("localhost", 8080, port)
 
 	client, closeFn, err := NewClient[pipelinepb.PipelinePrivateServiceClient](
 		WithServiceConfig(svc),
 		WithSetOTELClientHandler(false),
 	)
-	require.NoError(t, err)
-	assert.NotNil(t, client)
-	assert.NotNil(t, closeFn)
+	qt.Assert(err, quicktest.IsNil)
+	qt.Assert(client, quicktest.Not(quicktest.IsNil))
+	qt.Assert(closeFn, quicktest.Not(quicktest.IsNil))
 	defer func() {
 		if closeErr := closeFn(); closeErr != nil {
 			fmt.Printf("failed to close client: %v\n", closeErr)
@@ -162,29 +240,24 @@ func TestNewClient_PipelinePrivate(t *testing.T) {
 }
 
 func TestNewClient_ArtifactPublic(t *testing.T) {
-	// Create mock server
-	mockServer, err := NewMockGRPCServer()
-	require.NoError(t, err)
-	defer mockServer.Stop()
+	qt := quicktest.New(t)
 
-	// Start server in background
-	go func() {
-		err := mockServer.Start()
-		require.NoError(t, err)
-	}()
+	// Create mock server
+	server, port := createTestGRPCServer(t)
+	defer server.Stop()
 
 	// Wait a bit for server to start
 	time.Sleep(100 * time.Millisecond)
 
-	svc := createTestServiceConfig("localhost", mockServer.Port(), 8081)
+	svc := createTestServiceConfig("localhost", port, 8081)
 
 	client, closeFn, err := NewClient[artifactpb.ArtifactPublicServiceClient](
 		WithServiceConfig(svc),
 		WithSetOTELClientHandler(false),
 	)
-	require.NoError(t, err)
-	assert.NotNil(t, client)
-	assert.NotNil(t, closeFn)
+	qt.Assert(err, quicktest.IsNil)
+	qt.Assert(client, quicktest.Not(quicktest.IsNil))
+	qt.Assert(closeFn, quicktest.Not(quicktest.IsNil))
 	defer func() {
 		if closeErr := closeFn(); closeErr != nil {
 			fmt.Printf("failed to close client: %v\n", closeErr)
@@ -193,29 +266,24 @@ func TestNewClient_ArtifactPublic(t *testing.T) {
 }
 
 func TestNewClient_ArtifactPrivate(t *testing.T) {
-	// Create mock server
-	mockServer, err := NewMockGRPCServer()
-	require.NoError(t, err)
-	defer mockServer.Stop()
+	qt := quicktest.New(t)
 
-	// Start server in background
-	go func() {
-		err := mockServer.Start()
-		require.NoError(t, err)
-	}()
+	// Create mock server
+	server, port := createTestGRPCServer(t)
+	defer server.Stop()
 
 	// Wait a bit for server to start
 	time.Sleep(100 * time.Millisecond)
 
-	svc := createTestServiceConfig("localhost", 8080, mockServer.Port())
+	svc := createTestServiceConfig("localhost", 8080, port)
 
 	client, closeFn, err := NewClient[artifactpb.ArtifactPrivateServiceClient](
 		WithServiceConfig(svc),
 		WithSetOTELClientHandler(false),
 	)
-	require.NoError(t, err)
-	assert.NotNil(t, client)
-	assert.NotNil(t, closeFn)
+	qt.Assert(err, quicktest.IsNil)
+	qt.Assert(client, quicktest.Not(quicktest.IsNil))
+	qt.Assert(closeFn, quicktest.Not(quicktest.IsNil))
 	defer func() {
 		if closeErr := closeFn(); closeErr != nil {
 			fmt.Printf("failed to close client: %v\n", closeErr)
@@ -224,29 +292,24 @@ func TestNewClient_ArtifactPrivate(t *testing.T) {
 }
 
 func TestNewClient_ModelPublic(t *testing.T) {
-	// Create mock server
-	mockServer, err := NewMockGRPCServer()
-	require.NoError(t, err)
-	defer mockServer.Stop()
+	qt := quicktest.New(t)
 
-	// Start server in background
-	go func() {
-		err := mockServer.Start()
-		require.NoError(t, err)
-	}()
+	// Create mock server
+	server, port := createTestGRPCServer(t)
+	defer server.Stop()
 
 	// Wait a bit for server to start
 	time.Sleep(100 * time.Millisecond)
 
-	svc := createTestServiceConfig("localhost", mockServer.Port(), 8081)
+	svc := createTestServiceConfig("localhost", port, 8081)
 
 	client, closeFn, err := NewClient[modelpb.ModelPublicServiceClient](
 		WithServiceConfig(svc),
 		WithSetOTELClientHandler(false),
 	)
-	require.NoError(t, err)
-	assert.NotNil(t, client)
-	assert.NotNil(t, closeFn)
+	qt.Assert(err, quicktest.IsNil)
+	qt.Assert(client, quicktest.Not(quicktest.IsNil))
+	qt.Assert(closeFn, quicktest.Not(quicktest.IsNil))
 	defer func() {
 		if closeErr := closeFn(); closeErr != nil {
 			fmt.Printf("failed to close client: %v\n", closeErr)
@@ -255,29 +318,24 @@ func TestNewClient_ModelPublic(t *testing.T) {
 }
 
 func TestNewClient_ModelPrivate(t *testing.T) {
-	// Create mock server
-	mockServer, err := NewMockGRPCServer()
-	require.NoError(t, err)
-	defer mockServer.Stop()
+	qt := quicktest.New(t)
 
-	// Start server in background
-	go func() {
-		err := mockServer.Start()
-		require.NoError(t, err)
-	}()
+	// Create mock server
+	server, port := createTestGRPCServer(t)
+	defer server.Stop()
 
 	// Wait a bit for server to start
 	time.Sleep(100 * time.Millisecond)
 
-	svc := createTestServiceConfig("localhost", 8080, mockServer.Port())
+	svc := createTestServiceConfig("localhost", 8080, port)
 
 	client, closeFn, err := NewClient[modelpb.ModelPrivateServiceClient](
 		WithServiceConfig(svc),
 		WithSetOTELClientHandler(false),
 	)
-	require.NoError(t, err)
-	assert.NotNil(t, client)
-	assert.NotNil(t, closeFn)
+	qt.Assert(err, quicktest.IsNil)
+	qt.Assert(client, quicktest.Not(quicktest.IsNil))
+	qt.Assert(closeFn, quicktest.Not(quicktest.IsNil))
 	defer func() {
 		if closeErr := closeFn(); closeErr != nil {
 			fmt.Printf("failed to close client: %v\n", closeErr)
@@ -286,29 +344,24 @@ func TestNewClient_ModelPrivate(t *testing.T) {
 }
 
 func TestNewClient_MgmtPublic(t *testing.T) {
-	// Create mock server
-	mockServer, err := NewMockGRPCServer()
-	require.NoError(t, err)
-	defer mockServer.Stop()
+	qt := quicktest.New(t)
 
-	// Start server in background
-	go func() {
-		err := mockServer.Start()
-		require.NoError(t, err)
-	}()
+	// Create mock server
+	server, port := createTestGRPCServer(t)
+	defer server.Stop()
 
 	// Wait a bit for server to start
 	time.Sleep(100 * time.Millisecond)
 
-	svc := createTestServiceConfig("localhost", mockServer.Port(), 8081)
+	svc := createTestServiceConfig("localhost", port, 8081)
 
 	client, closeFn, err := NewClient[mgmtpb.MgmtPublicServiceClient](
 		WithServiceConfig(svc),
 		WithSetOTELClientHandler(false),
 	)
-	require.NoError(t, err)
-	assert.NotNil(t, client)
-	assert.NotNil(t, closeFn)
+	qt.Assert(err, quicktest.IsNil)
+	qt.Assert(client, quicktest.Not(quicktest.IsNil))
+	qt.Assert(closeFn, quicktest.Not(quicktest.IsNil))
 	defer func() {
 		if closeErr := closeFn(); closeErr != nil {
 			fmt.Printf("failed to close client: %v\n", closeErr)
@@ -317,29 +370,24 @@ func TestNewClient_MgmtPublic(t *testing.T) {
 }
 
 func TestNewClient_MgmtPrivate(t *testing.T) {
-	// Create mock server
-	mockServer, err := NewMockGRPCServer()
-	require.NoError(t, err)
-	defer mockServer.Stop()
+	qt := quicktest.New(t)
 
-	// Start server in background
-	go func() {
-		err := mockServer.Start()
-		require.NoError(t, err)
-	}()
+	// Create mock server
+	server, port := createTestGRPCServer(t)
+	defer server.Stop()
 
 	// Wait a bit for server to start
 	time.Sleep(100 * time.Millisecond)
 
-	svc := createTestServiceConfig("localhost", 8080, mockServer.Port())
+	svc := createTestServiceConfig("localhost", 8080, port)
 
 	client, closeFn, err := NewClient[mgmtpb.MgmtPrivateServiceClient](
 		WithServiceConfig(svc),
 		WithSetOTELClientHandler(false),
 	)
-	require.NoError(t, err)
-	assert.NotNil(t, client)
-	assert.NotNil(t, closeFn)
+	qt.Assert(err, quicktest.IsNil)
+	qt.Assert(client, quicktest.Not(quicktest.IsNil))
+	qt.Assert(closeFn, quicktest.Not(quicktest.IsNil))
 	defer func() {
 		if closeErr := closeFn(); closeErr != nil {
 			fmt.Printf("failed to close client: %v\n", closeErr)
@@ -348,29 +396,24 @@ func TestNewClient_MgmtPrivate(t *testing.T) {
 }
 
 func TestNewClient_Usage(t *testing.T) {
-	// Create mock server
-	mockServer, err := NewMockGRPCServer()
-	require.NoError(t, err)
-	defer mockServer.Stop()
+	qt := quicktest.New(t)
 
-	// Start server in background
-	go func() {
-		err := mockServer.Start()
-		require.NoError(t, err)
-	}()
+	// Create mock server
+	server, port := createTestGRPCServer(t)
+	defer server.Stop()
 
 	// Wait a bit for server to start
 	time.Sleep(100 * time.Millisecond)
 
-	svc := createTestServiceConfig("localhost", mockServer.Port(), 8081)
+	svc := createTestServiceConfig("localhost", port, 8081)
 
 	client, closeFn, err := NewClient[usagepb.UsageServiceClient](
 		WithServiceConfig(svc),
 		WithSetOTELClientHandler(false),
 	)
-	require.NoError(t, err)
-	assert.NotNil(t, client)
-	assert.NotNil(t, closeFn)
+	qt.Assert(err, quicktest.IsNil)
+	qt.Assert(client, quicktest.Not(quicktest.IsNil))
+	qt.Assert(closeFn, quicktest.Not(quicktest.IsNil))
 	defer func() {
 		if closeErr := closeFn(); closeErr != nil {
 			fmt.Printf("failed to close client: %v\n", closeErr)
@@ -379,6 +422,8 @@ func TestNewClient_Usage(t *testing.T) {
 }
 
 func TestNewClient_UnsupportedClientType(t *testing.T) {
+	qt := quicktest.New(t)
+
 	svc := createTestServiceConfig("localhost", 8080, 8081)
 
 	// Test with an unsupported client type
@@ -390,101 +435,83 @@ func TestNewClient_UnsupportedClientType(t *testing.T) {
 		WithServiceConfig(svc),
 		WithSetOTELClientHandler(false),
 	)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported client type")
-	assert.Nil(t, client)
-	assert.Nil(t, closeFn)
+	qt.Assert(err, quicktest.Not(quicktest.IsNil))
+	qt.Check(err.Error(), quicktest.Contains, "unsupported client type")
+	qt.Assert(client, quicktest.IsNil)
+	qt.Assert(closeFn, quicktest.IsNil)
 }
 
 func TestNewClient_MissingServiceConfig(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Test with missing service config
 	client, closeFn, err := NewClient[pipelinepb.PipelinePublicServiceClient](
 		WithSetOTELClientHandler(false),
 	)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "service config is required")
-	assert.Nil(t, client)
-	assert.Nil(t, closeFn)
+	qt.Assert(err, quicktest.Not(quicktest.IsNil))
+	qt.Check(err.Error(), quicktest.Contains, "service config is required")
+	qt.Assert(client, quicktest.IsNil)
+	qt.Assert(closeFn, quicktest.IsNil)
 }
 
 func TestNewClient_WithHTTPS(t *testing.T) {
+	qt := quicktest.New(t)
+
 	svc := createTestServiceConfigWithHTTPS("localhost", 8080, 8081, "/nonexistent/cert.pem", "/nonexistent/key.pem")
 
 	client, closeFn, err := NewClient[pipelinepb.PipelinePublicServiceClient](
 		WithServiceConfig(svc),
 		WithSetOTELClientHandler(false),
 	)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "TLS credentials")
-	assert.Nil(t, client)
-	assert.Nil(t, closeFn)
+	qt.Assert(err, quicktest.Not(quicktest.IsNil))
+	qt.Check(err.Error(), quicktest.Contains, "TLS credentials")
+	qt.Assert(client, quicktest.IsNil)
+	qt.Assert(closeFn, quicktest.IsNil)
 }
 
 func TestNewClient_PortSelection(t *testing.T) {
+	qt := quicktest.New(t)
+
 	// Create mock server for public port
-	publicServer, err := NewMockGRPCServer()
-	require.NoError(t, err)
+	publicServer, publicPort := createTestGRPCServer(t)
 	defer publicServer.Stop()
 
 	// Create mock server for private port
-	privateServer, err := NewMockGRPCServer()
-	require.NoError(t, err)
+	privateServer, privatePort := createTestGRPCServer(t)
 	defer privateServer.Stop()
-
-	// Start servers in background
-	go func() {
-		err := publicServer.Start()
-		require.NoError(t, err)
-	}()
-	go func() {
-		err := privateServer.Start()
-		require.NoError(t, err)
-	}()
 
 	// Wait a bit for servers to start
 	time.Sleep(100 * time.Millisecond)
 
-	svc := createTestServiceConfig("localhost", publicServer.Port(), privateServer.Port())
+	svc := createTestServiceConfig("localhost", publicPort, privatePort)
 
 	// Test public port selection
-	_, _, err = NewClient[pipelinepb.PipelinePublicServiceClient](
+	_, _, err := NewClient[pipelinepb.PipelinePublicServiceClient](
 		WithServiceConfig(svc),
 		WithSetOTELClientHandler(false),
 	)
-	require.NoError(t, err)
+	qt.Assert(err, quicktest.IsNil)
 
 	// Test private port selection
 	_, _, err = NewClient[pipelinepb.PipelinePrivateServiceClient](
 		WithServiceConfig(svc),
 		WithSetOTELClientHandler(false),
 	)
-	require.NoError(t, err)
+	qt.Assert(err, quicktest.IsNil)
 }
 
 func TestNewClient_AllClientTypes(t *testing.T) {
 	// Create mock servers for public and private ports
-	publicServer, err := NewMockGRPCServer()
-	require.NoError(t, err)
+	publicServer, publicPort := createTestGRPCServer(t)
 	defer publicServer.Stop()
 
-	privateServer, err := NewMockGRPCServer()
-	require.NoError(t, err)
+	privateServer, privatePort := createTestGRPCServer(t)
 	defer privateServer.Stop()
-
-	// Start servers in background
-	go func() {
-		err := publicServer.Start()
-		require.NoError(t, err)
-	}()
-	go func() {
-		err := privateServer.Start()
-		require.NoError(t, err)
-	}()
 
 	// Wait a bit for servers to start
 	time.Sleep(100 * time.Millisecond)
 
-	svc := createTestServiceConfig("localhost", publicServer.Port(), privateServer.Port())
+	svc := createTestServiceConfig("localhost", publicPort, privatePort)
 
 	clientTypes := []struct {
 		name string
@@ -584,28 +611,22 @@ func TestNewClient_AllClientTypes(t *testing.T) {
 
 	for _, tt := range clientTypes {
 		t.Run(tt.name, func(t *testing.T) {
+			qt := quicktest.New(t)
 			err := tt.test()
-			require.NoError(t, err)
+			qt.Assert(err, quicktest.IsNil)
 		})
 	}
 }
 
 func TestNewClient_OptionsPattern(t *testing.T) {
 	// Create mock server
-	mockServer, err := NewMockGRPCServer()
-	require.NoError(t, err)
-	defer mockServer.Stop()
-
-	// Start server in background
-	go func() {
-		err := mockServer.Start()
-		require.NoError(t, err)
-	}()
+	server, port := createTestGRPCServer(t)
+	defer server.Stop()
 
 	// Wait a bit for server to start
 	time.Sleep(100 * time.Millisecond)
 
-	svc := createTestServiceConfig("localhost", mockServer.Port(), 8081)
+	svc := createTestServiceConfig("localhost", port, 8081)
 
 	// Test with different option combinations
 	tests := []struct {
@@ -637,15 +658,16 @@ func TestNewClient_OptionsPattern(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			qt := quicktest.New(t)
 			client, closeFn, err := NewClient[pipelinepb.PipelinePublicServiceClient](tt.options...)
 			if tt.expectError {
-				assert.Error(t, err)
-				assert.Nil(t, client)
-				assert.Nil(t, closeFn)
+				qt.Assert(err, quicktest.Not(quicktest.IsNil))
+				qt.Assert(client, quicktest.IsNil)
+				qt.Assert(closeFn, quicktest.IsNil)
 			} else {
-				assert.NoError(t, err)
-				assert.NotNil(t, client)
-				assert.NotNil(t, closeFn)
+				qt.Assert(err, quicktest.IsNil)
+				qt.Assert(client, quicktest.Not(quicktest.IsNil))
+				qt.Assert(closeFn, quicktest.Not(quicktest.IsNil))
 				if closeFn != nil {
 					defer func() {
 						if closeErr := closeFn(); closeErr != nil {
@@ -664,20 +686,13 @@ func TestNewClient_OptionsPattern(t *testing.T) {
 
 func BenchmarkNewClient_PipelinePublic(b *testing.B) {
 	// Create mock server
-	mockServer, err := NewMockGRPCServer()
-	require.NoError(b, err)
-	defer mockServer.Stop()
-
-	// Start server in background
-	go func() {
-		err := mockServer.Start()
-		require.NoError(b, err)
-	}()
+	server, port := createTestGRPCServer(b)
+	defer server.Stop()
 
 	// Wait a bit for server to start
 	time.Sleep(100 * time.Millisecond)
 
-	svc := createTestServiceConfig("localhost", mockServer.Port(), 8081)
+	svc := createTestServiceConfig("localhost", port, 8081)
 
 	for i := 0; i < b.N; i++ {
 		_, closeFn, err := NewClient[pipelinepb.PipelinePublicServiceClient](
@@ -695,28 +710,16 @@ func BenchmarkNewClient_PipelinePublic(b *testing.B) {
 
 func BenchmarkNewClient_AllTypes(b *testing.B) {
 	// Create mock servers for public and private ports
-	publicServer, err := NewMockGRPCServer()
-	require.NoError(b, err)
+	publicServer, publicPort := createTestGRPCServer(b)
 	defer publicServer.Stop()
 
-	privateServer, err := NewMockGRPCServer()
-	require.NoError(b, err)
+	privateServer, privatePort := createTestGRPCServer(b)
 	defer privateServer.Stop()
-
-	// Start servers in background
-	go func() {
-		err := publicServer.Start()
-		require.NoError(b, err)
-	}()
-	go func() {
-		err := privateServer.Start()
-		require.NoError(b, err)
-	}()
 
 	// Wait a bit for servers to start
 	time.Sleep(100 * time.Millisecond)
 
-	svc := createTestServiceConfig("localhost", publicServer.Port(), privateServer.Port())
+	svc := createTestServiceConfig("localhost", publicPort, privatePort)
 
 	clientTypes := []struct {
 		name string

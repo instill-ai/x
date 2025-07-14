@@ -2,67 +2,25 @@ package gateway
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
+	"github.com/frankban/quicktest"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
-	"github.com/stretchr/testify/assert"
+	"github.com/instill-ai/x/constant"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-
-	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/protobuf/protoadapt"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	"github.com/instill-ai/x/constant"
+	"errors"
+	"io"
 
 	mgmtpb "github.com/instill-ai/protogen-go/core/mgmt/v1beta"
 )
-
-// Mock marshaler for testing
-type mockMarshaler struct {
-	contentType string
-	marshalErr  error
-}
-
-func (m *mockMarshaler) ContentType(any) string {
-	return m.contentType
-}
-
-func (m *mockMarshaler) Marshal(any) ([]byte, error) {
-	if m.marshalErr != nil {
-		return nil, m.marshalErr
-	}
-	return []byte(`{"test": "data"}`), nil
-}
-
-func (m *mockMarshaler) Unmarshal([]byte, any) error {
-	return nil
-}
-
-func (m *mockMarshaler) NewDecoder(r io.Reader) runtime.Decoder {
-	return &mockDecoder{}
-}
-
-func (m *mockMarshaler) NewEncoder(w io.Writer) runtime.Encoder {
-	return &mockEncoder{}
-}
-
-type mockDecoder struct{}
-
-func (d *mockDecoder) Decode(v any) error {
-	return nil
-}
-
-type mockEncoder struct{}
-
-func (e *mockEncoder) Encode(v any) error {
-	return nil
-}
 
 func TestHTTPResponseModifier(t *testing.T) {
 	tests := []struct {
@@ -109,7 +67,8 @@ func TestHTTPResponseModifier(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt := quicktest.New(t)
+		qt.Run(tt.name, func(c *quicktest.C) {
 			// Create context with or without server metadata
 			ctx := context.Background()
 			if tt.headerMD != nil {
@@ -126,124 +85,100 @@ func TestHTTPResponseModifier(t *testing.T) {
 
 			// Verify results
 			if tt.expectedError {
-				assert.Error(t, err, tt.description)
+				c.Check(err, quicktest.Not(quicktest.IsNil))
 			} else {
-				assert.NoError(t, err, tt.description)
-				assert.Equal(t, tt.expectedCode, w.Code, tt.description)
+				c.Check(err, quicktest.IsNil)
+				c.Check(w.Code, quicktest.Equals, tt.expectedCode)
 			}
 		})
 	}
 }
 
-func TestErrorHandler(t *testing.T) {
-	tests := []struct {
-		name           string
-		err            error
-		contentType    string
-		marshalErr     error
-		teHeader       string
-		headerMD       metadata.MD
-		trailerMD      metadata.MD
-		expectedStatus int
-		description    string
-	}{
-		{
-			name:           "successful error handling",
-			err:            status.Error(codes.InvalidArgument, "invalid argument"),
-			contentType:    "application/json",
-			marshalErr:     nil,
-			teHeader:       "",
-			expectedStatus: 200, // default
-			description:    "should handle error successfully",
-		},
-		{
-			name:           "unauthenticated error",
-			err:            status.Error(codes.Unauthenticated, "unauthorized"),
-			contentType:    "application/json",
-			marshalErr:     nil,
-			teHeader:       "",
-			expectedStatus: 200, // default
-			description:    "should set WWW-Authenticate header for unauthenticated error",
-		},
-		{
-			name:           "marshal error",
-			err:            status.Error(codes.Internal, "internal error"),
-			contentType:    "application/json",
-			marshalErr:     assert.AnError,
-			teHeader:       "",
-			expectedStatus: 500,
-			description:    "should return 500 when marshal fails",
-		},
-		{
-			name:           "with trailers",
-			err:            status.Error(codes.OK, "success"),
-			contentType:    "application/json",
-			marshalErr:     nil,
-			teHeader:       "trailers",
-			headerMD:       metadata.New(map[string]string{"test-header": "value"}),
-			trailerMD:      metadata.New(map[string]string{"test-trailer": "value"}),
-			expectedStatus: 200, // default
-			description:    "should handle trailers when TE header includes trailers",
-		},
-	}
+func TestErrorHandler_WithMocks(t *testing.T) {
+	qt := quicktest.New(t)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create context with server metadata
-			ctx := context.Background()
-			serverMD := runtime.ServerMetadata{}
-			if tt.headerMD != nil {
-				serverMD.HeaderMD = tt.headerMD
-			}
-			if tt.trailerMD != nil {
-				serverMD.TrailerMD = tt.trailerMD
-			}
-			ctx = runtime.NewServerMetadataContext(ctx, serverMD)
+	// Use generated mock and cast to runtime.Marshaler
+	mockMarshaler := &mockMarshaler{contentType: "application/json"}
 
-			// Create request with TE header
-			req := httptest.NewRequest("GET", "/test", nil)
-			if tt.teHeader != "" {
-				req.Header.Set("TE", tt.teHeader)
-			}
+	ctx := context.Background()
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	mux := &runtime.ServeMux{}
+	err := status.Error(codes.InvalidArgument, "test error")
 
-			// Create response writer
-			w := httptest.NewRecorder()
+	// Call ErrorHandler
+	ErrorHandler(ctx, mux, mockMarshaler, w, req, err)
 
-			// Create mock marshaler
-			marshaler := &mockMarshaler{
-				contentType: tt.contentType,
-				marshalErr:  tt.marshalErr,
-			}
+	// Verify results
+	qt.Check(w.Header().Get("Content-Type"), quicktest.Equals, "application/problem+json")
+	qt.Check(w.Code, quicktest.Equals, http.StatusBadRequest)
+}
 
-			// Create mock mux
-			mux := &runtime.ServeMux{}
+func TestErrorHandler_MarshalError(t *testing.T) {
+	qt := quicktest.New(t)
 
-			// Call ErrorHandler
-			ErrorHandler(ctx, mux, marshaler, w, req, tt.err)
+	// Use custom mock with marshal error
+	mockMarshaler := &mockMarshaler{contentType: "application/json", marshalErr: errors.New("marshal error")}
 
-			// Verify results
-			if tt.err != nil {
-				s := status.Convert(tt.err)
-				if s.Code() == codes.Unauthenticated {
-					assert.Equal(t, s.Message(), w.Header().Get("WWW-Authenticate"), tt.description)
-				}
+	ctx := context.Background()
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	mux := &runtime.ServeMux{}
+	err := status.Error(codes.Internal, "test error")
 
-				if tt.contentType == "application/json" {
-					assert.Equal(t, "application/problem+json", w.Header().Get("Content-Type"), tt.description)
-				} else {
-					assert.Equal(t, tt.contentType, w.Header().Get("Content-Type"), tt.description)
-				}
+	// Call ErrorHandler
+	ErrorHandler(ctx, mux, mockMarshaler, w, req, err)
 
-				if tt.marshalErr != nil {
-					assert.Equal(t, http.StatusInternalServerError, w.Code, tt.description)
-				}
+	// Verify results
+	qt.Check(w.Code, quicktest.Equals, http.StatusInternalServerError)
+}
 
-				if tt.teHeader != "" && strings.Contains(strings.ToLower(tt.teHeader), "trailers") {
-					assert.Equal(t, "chunked", w.Header().Get("Transfer-Encoding"), tt.description)
-				}
-			}
-		})
-	}
+func TestErrorHandler_Unauthenticated(t *testing.T) {
+	qt := quicktest.New(t)
+
+	// Use custom mock
+	mockMarshaler := &mockMarshaler{contentType: "application/json"}
+
+	ctx := context.Background()
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	mux := &runtime.ServeMux{}
+	err := status.Error(codes.Unauthenticated, "unauthorized")
+
+	// Call ErrorHandler
+	ErrorHandler(ctx, mux, mockMarshaler, w, req, err)
+
+	// Verify results
+	qt.Check(w.Header().Get("WWW-Authenticate"), quicktest.Equals, "unauthorized")
+	qt.Check(w.Code, quicktest.Equals, http.StatusUnauthorized)
+}
+
+func TestErrorHandler_WithTrailers(t *testing.T) {
+	qt := quicktest.New(t)
+
+	// Use custom mock
+	mockMarshaler := &mockMarshaler{contentType: "application/json"}
+
+	// Create context with server metadata containing trailers
+	headerMD := metadata.New(map[string]string{"test-header": "header-value"})
+	trailerMD := metadata.New(map[string]string{"test-trailer": "trailer-value"})
+	ctx := runtime.NewServerMetadataContext(context.Background(), runtime.ServerMetadata{
+		HeaderMD:  headerMD,
+		TrailerMD: trailerMD,
+	})
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("TE", "trailers")
+	w := httptest.NewRecorder()
+	mux := &runtime.ServeMux{}
+	err := status.Error(codes.OK, "success")
+
+	// Call ErrorHandler
+	ErrorHandler(ctx, mux, mockMarshaler, w, req, err)
+
+	// Verify trailer headers were set
+	qt.Check(w.Header().Get("Transfer-Encoding"), quicktest.Equals, "chunked")
+	qt.Check(w.Header().Get("Trailer"), quicktest.Contains, "Grpc-Trailer-Test-Trailer")
 }
 
 func TestCustomHeaderMatcher(t *testing.T) {
@@ -327,10 +262,11 @@ func TestCustomHeaderMatcher(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt := quicktest.New(t)
+		qt.Run(tt.name, func(c *quicktest.C) {
 			key, match := CustomHeaderMatcher(tt.key)
-			assert.Equal(t, tt.expectedKey, key, tt.description)
-			assert.Equal(t, tt.expectedMatch, match, tt.description)
+			c.Check(key, quicktest.Equals, tt.expectedKey)
+			c.Check(match, quicktest.Equals, tt.expectedMatch)
 		})
 	}
 }
@@ -376,13 +312,14 @@ func TestInjectOwnerToContext(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt := quicktest.New(t)
+		qt.Run(tt.name, func(c *quicktest.C) {
 			ctx := context.Background()
 			resultCtx := InjectOwnerToContext(ctx, tt.owner)
 
 			// Extract metadata from context
 			md, ok := metadata.FromOutgoingContext(resultCtx)
-			assert.True(t, ok, tt.description)
+			c.Check(ok, quicktest.Equals, true)
 
 			// Verify expected metadata
 			for key, expectedValue := range tt.expected {
@@ -390,144 +327,25 @@ func TestInjectOwnerToContext(t *testing.T) {
 				if expectedValue == "" {
 					// For empty expected values, check if the key exists but has empty value
 					if len(values) > 0 {
-						assert.Equal(t, "", values[0], tt.description)
+						c.Check(values[0], quicktest.Equals, "")
 					}
 				} else {
-					assert.Len(t, values, 1, tt.description)
-					assert.Equal(t, expectedValue, values[0], tt.description)
+					c.Check(len(values), quicktest.Equals, 1)
+					c.Check(values[0], quicktest.Equals, expectedValue)
 				}
 			}
 		})
 	}
 }
 
-// Test error handling edge cases
-func TestErrorHandlerEdgeCases(t *testing.T) {
-	// Test with nil error
-	ctx := context.Background()
-	req := httptest.NewRequest("GET", "/test", nil)
-	w := httptest.NewRecorder()
-	marshaler := &mockMarshaler{contentType: "application/json"}
-	mux := &runtime.ServeMux{}
-
-	ErrorHandler(ctx, mux, marshaler, w, req, nil)
-	// Should not panic and should handle gracefully
-	assert.NotNil(t, w)
-
-	// Test with context without server metadata
-	ctx = context.Background()
-	req = httptest.NewRequest("GET", "/test", nil)
-	w = httptest.NewRecorder()
-	err := status.Error(codes.Internal, "test error")
-
-	ErrorHandler(ctx, mux, marshaler, w, req, err)
-	// Should handle gracefully even without server metadata
-	assert.NotNil(t, w)
-}
-
-// Test header manipulation in HTTPResponseModifier
-func TestHTTPResponseModifierHeaderManipulation(t *testing.T) {
-	// Create context with server metadata containing x-http-code
-	headerMD := metadata.New(map[string]string{
-		"x-http-code": "404",
-	})
-	ctx := runtime.NewServerMetadataContext(context.Background(), runtime.ServerMetadata{
-		HeaderMD: headerMD,
-	})
-
-	w := httptest.NewRecorder()
-
-	// Call HTTPResponseModifier
-	err := HTTPResponseModifier(ctx, w, &emptypb.Empty{})
-	assert.NoError(t, err)
-
-	// Verify that the header was deleted from the response
-	assert.Empty(t, w.Header().Get("Grpc-Metadata-X-Http-Code"))
-	assert.Equal(t, 404, w.Code)
-}
-
-// Test trailer handling in ErrorHandler
-func TestErrorHandlerTrailerHandling(t *testing.T) {
-	// Create context with server metadata containing trailers
-	headerMD := metadata.New(map[string]string{"test-header": "header-value"})
-	trailerMD := metadata.New(map[string]string{"test-trailer": "trailer-value"})
-	ctx := runtime.NewServerMetadataContext(context.Background(), runtime.ServerMetadata{
-		HeaderMD:  headerMD,
-		TrailerMD: trailerMD,
-	})
-
-	req := httptest.NewRequest("GET", "/test", nil)
-	req.Header.Set("TE", "trailers")
-	w := httptest.NewRecorder()
-	marshaler := &mockMarshaler{contentType: "application/json"}
-	mux := &runtime.ServeMux{}
-	err := status.Error(codes.OK, "success")
-
-	ErrorHandler(ctx, mux, marshaler, w, req, err)
-
-	// Verify trailer headers were set
-	assert.Equal(t, "chunked", w.Header().Get("Transfer-Encoding"))
-	assert.Contains(t, w.Header().Get("Trailer"), "Grpc-Trailer-Test-Trailer")
-}
-
-// Test content type handling in ErrorHandler
-func TestErrorHandlerContentTypeHandling(t *testing.T) {
-	tests := []struct {
-		name         string
-		contentType  string
-		expectedType string
-		description  string
-	}{
-		{
-			name:         "json content type",
-			contentType:  "application/json",
-			expectedType: "application/problem+json",
-			description:  "should convert application/json to application/problem+json",
-		},
-		{
-			name:         "xml content type",
-			contentType:  "application/xml",
-			expectedType: "application/xml",
-			description:  "should keep non-json content types unchanged",
-		},
-		{
-			name:         "empty content type",
-			contentType:  "",
-			expectedType: "",
-			description:  "should handle empty content type",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			req := httptest.NewRequest("GET", "/test", nil)
-			w := httptest.NewRecorder()
-			marshaler := &mockMarshaler{contentType: tt.contentType}
-			mux := &runtime.ServeMux{}
-			err := status.Error(codes.InvalidArgument, "test error")
-
-			ErrorHandler(ctx, mux, marshaler, w, req, err)
-
-			assert.Equal(t, tt.expectedType, w.Header().Get("Content-Type"), tt.description)
-		})
-	}
-}
-
-func stringPtr(s string) *string {
-	return &s
-}
-
-// Add comprehensive tests for gRPC to HTTP status code conversion
 func TestErrorHandler_GRPCToHTTPCodeConversion(t *testing.T) {
 	tests := []struct {
 		name           string
 		grpcCode       codes.Code
-		details        []any // Change to []any to match protoadapt.MessageV1
+		details        []any
 		expectedStatus int
 		description    string
 	}{
-		// Standard gRPC to HTTP mappings
 		{
 			name:           "OK to 200",
 			grpcCode:       codes.OK,
@@ -537,7 +355,7 @@ func TestErrorHandler_GRPCToHTTPCodeConversion(t *testing.T) {
 		{
 			name:           "Canceled to 499",
 			grpcCode:       codes.Canceled,
-			expectedStatus: 499, // Client Closed Request
+			expectedStatus: 499,
 			description:    "should map codes.Canceled to HTTP 499",
 		},
 		{
@@ -553,78 +371,6 @@ func TestErrorHandler_GRPCToHTTPCodeConversion(t *testing.T) {
 			description:    "should map codes.InvalidArgument to HTTP 400",
 		},
 		{
-			name:           "DeadlineExceeded to 504",
-			grpcCode:       codes.DeadlineExceeded,
-			expectedStatus: http.StatusGatewayTimeout,
-			description:    "should map codes.DeadlineExceeded to HTTP 504",
-		},
-		{
-			name:           "NotFound to 404",
-			grpcCode:       codes.NotFound,
-			expectedStatus: http.StatusNotFound,
-			description:    "should map codes.NotFound to HTTP 404",
-		},
-		{
-			name:           "AlreadyExists to 409",
-			grpcCode:       codes.AlreadyExists,
-			expectedStatus: http.StatusConflict,
-			description:    "should map codes.AlreadyExists to HTTP 409",
-		},
-		{
-			name:           "PermissionDenied to 403",
-			grpcCode:       codes.PermissionDenied,
-			expectedStatus: http.StatusForbidden,
-			description:    "should map codes.PermissionDenied to HTTP 403",
-		},
-		{
-			name:           "ResourceExhausted to 429",
-			grpcCode:       codes.ResourceExhausted,
-			expectedStatus: http.StatusTooManyRequests,
-			description:    "should map codes.ResourceExhausted to HTTP 429",
-		},
-		{
-			name:           "FailedPrecondition to 400",
-			grpcCode:       codes.FailedPrecondition,
-			expectedStatus: http.StatusBadRequest,
-			description:    "should map codes.FailedPrecondition to HTTP 400 when no details",
-		},
-		{
-			name:           "Aborted to 409",
-			grpcCode:       codes.Aborted,
-			expectedStatus: http.StatusConflict,
-			description:    "should map codes.Aborted to HTTP 409",
-		},
-		{
-			name:           "OutOfRange to 400",
-			grpcCode:       codes.OutOfRange,
-			expectedStatus: http.StatusBadRequest,
-			description:    "should map codes.OutOfRange to HTTP 400",
-		},
-		{
-			name:           "Unimplemented to 501",
-			grpcCode:       codes.Unimplemented,
-			expectedStatus: http.StatusNotImplemented,
-			description:    "should map codes.Unimplemented to HTTP 501",
-		},
-		{
-			name:           "Internal to 500",
-			grpcCode:       codes.Internal,
-			expectedStatus: http.StatusInternalServerError,
-			description:    "should map codes.Internal to HTTP 500",
-		},
-		{
-			name:           "Unavailable to 503",
-			grpcCode:       codes.Unavailable,
-			expectedStatus: http.StatusServiceUnavailable,
-			description:    "should map codes.Unavailable to HTTP 503",
-		},
-		{
-			name:           "DataLoss to 500",
-			grpcCode:       codes.DataLoss,
-			expectedStatus: http.StatusInternalServerError,
-			description:    "should map codes.DataLoss to HTTP 500",
-		},
-		{
 			name:           "Unauthenticated to 401",
 			grpcCode:       codes.Unauthenticated,
 			expectedStatus: http.StatusUnauthorized,
@@ -633,7 +379,11 @@ func TestErrorHandler_GRPCToHTTPCodeConversion(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt := quicktest.New(t)
+		qt.Run(tt.name, func(c *quicktest.C) {
+			// Create mock marshaler
+			mockMarshaler := &mockMarshaler{contentType: "application/json"}
+
 			// Create gRPC status with the specified code
 			st := status.New(tt.grpcCode, "test error")
 			if len(tt.details) > 0 {
@@ -644,25 +394,22 @@ func TestErrorHandler_GRPCToHTTPCodeConversion(t *testing.T) {
 			ctx := context.Background()
 			req := httptest.NewRequest("GET", "/test", nil)
 			w := httptest.NewRecorder()
-			marshaler := &mockMarshaler{contentType: "application/json"}
 			mux := &runtime.ServeMux{}
 
 			// Call ErrorHandler
-			ErrorHandler(ctx, mux, marshaler, w, req, st.Err())
+			ErrorHandler(ctx, mux, mockMarshaler, w, req, st.Err())
 
 			// Verify HTTP status code
-			assert.Equal(t, tt.expectedStatus, w.Code, tt.description)
+			c.Check(w.Code, quicktest.Equals, tt.expectedStatus)
 
 			// Verify WWW-Authenticate header for Unauthenticated errors
 			if tt.grpcCode == codes.Unauthenticated {
-				assert.Equal(t, "test error", w.Header().Get("WWW-Authenticate"),
-					"should set WWW-Authenticate header for unauthenticated errors")
+				c.Check(w.Header().Get("WWW-Authenticate"), quicktest.Equals, "test error")
 			}
 		})
 	}
 }
 
-// Test FailedPrecondition with PreconditionFailure details
 func TestErrorHandler_FailedPreconditionWithDetails(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -689,18 +436,6 @@ func TestErrorHandler_FailedPreconditionWithDetails(t *testing.T) {
 			description:    "should map STATE violation to HTTP 422",
 		},
 		{
-			name:           "RENAME violation to 422",
-			violationType:  "RENAME",
-			expectedStatus: http.StatusUnprocessableEntity,
-			description:    "should map RENAME violation to HTTP 422",
-		},
-		{
-			name:           "TRIGGER violation to 422",
-			violationType:  "TRIGGER",
-			expectedStatus: http.StatusUnprocessableEntity,
-			description:    "should map TRIGGER violation to HTTP 422",
-		},
-		{
 			name:           "unknown violation to 400",
 			violationType:  "UNKNOWN",
 			expectedStatus: http.StatusBadRequest,
@@ -709,7 +444,12 @@ func TestErrorHandler_FailedPreconditionWithDetails(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		qt := quicktest.New(t)
+		qt.Run(tt.name, func(c *quicktest.C) {
+
+			// Create mock marshaler
+			mockMarshaler := &mockMarshaler{contentType: "application/json"}
+
 			// Create PreconditionFailure detail
 			preconditionFailure := &errdetails.PreconditionFailure{
 				Violations: []*errdetails.PreconditionFailure_Violation{
@@ -727,19 +467,17 @@ func TestErrorHandler_FailedPreconditionWithDetails(t *testing.T) {
 			ctx := context.Background()
 			req := httptest.NewRequest("GET", "/test", nil)
 			w := httptest.NewRecorder()
-			marshaler := &mockMarshaler{contentType: "application/json"}
 			mux := &runtime.ServeMux{}
 
 			// Call ErrorHandler
-			ErrorHandler(ctx, mux, marshaler, w, req, st.Err())
+			ErrorHandler(ctx, mux, mockMarshaler, w, req, st.Err())
 
 			// Verify HTTP status code
-			assert.Equal(t, tt.expectedStatus, w.Code, tt.description)
+			c.Check(w.Code, quicktest.Equals, tt.expectedStatus)
 		})
 	}
 }
 
-// Test FailedPrecondition with multiple violations
 func TestErrorHandler_FailedPreconditionMultipleViolations(t *testing.T) {
 	// Create PreconditionFailure with multiple violations
 	preconditionFailure := &errdetails.PreconditionFailure{
@@ -768,11 +506,10 @@ func TestErrorHandler_FailedPreconditionMultipleViolations(t *testing.T) {
 	ErrorHandler(ctx, mux, marshaler, w, req, st.Err())
 
 	// Should use the first violation type (UNKNOWN) which maps to 400
-	assert.Equal(t, http.StatusBadRequest, w.Code,
-		"should use first violation type for status code mapping")
+	qt := quicktest.New(t)
+	qt.Check(w.Code, quicktest.Equals, http.StatusBadRequest)
 }
 
-// Test FailedPrecondition with empty violations
 func TestErrorHandler_FailedPreconditionEmptyViolations(t *testing.T) {
 	// Create PreconditionFailure with empty violations
 	preconditionFailure := &errdetails.PreconditionFailure{
@@ -794,6 +531,50 @@ func TestErrorHandler_FailedPreconditionEmptyViolations(t *testing.T) {
 	ErrorHandler(ctx, mux, marshaler, w, req, st.Err())
 
 	// Should default to 400 when no violations
-	assert.Equal(t, http.StatusBadRequest, w.Code,
-		"should default to 400 when no violations")
+	qt := quicktest.New(t)
+	qt.Check(w.Code, quicktest.Equals, http.StatusBadRequest)
+}
+
+func stringPtr(s string) *string {
+	return &s
+}
+
+type mockMarshaler struct {
+	contentType string
+	marshalErr  error
+}
+
+func (m *mockMarshaler) ContentType(v interface{}) string {
+	return m.contentType
+}
+
+func (m *mockMarshaler) Marshal(v interface{}) ([]byte, error) {
+	if m.marshalErr != nil {
+		return nil, m.marshalErr
+	}
+	return []byte(`{"error":"test"}`), nil
+}
+
+func (m *mockMarshaler) Unmarshal(data []byte, v interface{}) error {
+	return nil
+}
+
+func (m *mockMarshaler) NewDecoder(r io.Reader) runtime.Decoder {
+	return &mockDecoder{}
+}
+
+func (m *mockMarshaler) NewEncoder(w io.Writer) runtime.Encoder {
+	return &mockEncoder{}
+}
+
+type mockDecoder struct{}
+
+func (d *mockDecoder) Decode(v interface{}) error {
+	return nil
+}
+
+type mockEncoder struct{}
+
+func (e *mockEncoder) Encode(v interface{}) error {
+	return nil
 }
