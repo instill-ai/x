@@ -32,17 +32,17 @@ func TestDecideLogGRPCRequest(t *testing.T) {
 			description:           "when no error and no exclude patterns, should log",
 		},
 		{
-			name:                  "no error, pattern matches, should log",
+			name:                  "no error, pattern matches, should NOT log",
 			fullMethod:            "test.PublicService/liveness",
-			methodExcludePatterns: []string{"*PublicService/.*ness$"},
+			methodExcludePatterns: []string{".*PublicService/.*ness$"},
 			err:                   nil,
-			expectedShouldLog:     true, // matches pattern, so should log
-			description:           "when pattern matches, should log",
+			expectedShouldLog:     false, // matches pattern, so should NOT log
+			description:           "when pattern matches, should NOT log",
 		},
 		{
 			name:                  "no error, pattern does not match, should log",
 			fullMethod:            "test.Service/Method",
-			methodExcludePatterns: []string{"*PublicService/.*ness$"},
+			methodExcludePatterns: []string{".*PublicService/.*ness$"},
 			err:                   nil,
 			expectedShouldLog:     true,
 			description:           "when pattern does not match, should log",
@@ -50,7 +50,7 @@ func TestDecideLogGRPCRequest(t *testing.T) {
 		{
 			name:                  "with error, pattern matches, should log",
 			fullMethod:            "test.PublicService/liveness",
-			methodExcludePatterns: []string{"*PublicService/.*ness$"},
+			methodExcludePatterns: []string{".*PublicService/.*ness$"},
 			err:                   errors.New("test error"),
 			expectedShouldLog:     true,
 			description:           "when there is an error, should always log regardless of patterns",
@@ -58,15 +58,15 @@ func TestDecideLogGRPCRequest(t *testing.T) {
 		{
 			name:                  "multiple patterns, one matches",
 			fullMethod:            "test.PrivateService/method",
-			methodExcludePatterns: []string{"*PublicService/.*ness$", "*PrivateService/.*$"},
+			methodExcludePatterns: []string{".*PublicService/.*ness$", ".*PrivateService/.*$"},
 			err:                   nil,
-			expectedShouldLog:     true, // matches second pattern
-			description:           "when one of multiple patterns matches, should log",
+			expectedShouldLog:     false, // matches second pattern, so should NOT log
+			description:           "when one of multiple patterns matches, should NOT log",
 		},
 		{
 			name:                  "multiple patterns, none match",
 			fullMethod:            "test.Service/method",
-			methodExcludePatterns: []string{"*PublicService/.*ness$", "*PrivateService/.*$"},
+			methodExcludePatterns: []string{".*PublicService/.*ness$", ".*PrivateService/.*$"},
 			err:                   nil,
 			expectedShouldLog:     true,
 			description:           "when none of multiple patterns match, should log",
@@ -95,28 +95,28 @@ func TestDeciderUnaryServerInterceptor(t *testing.T) {
 			name:                  "nil patterns, uses defaults",
 			methodExcludePatterns: nil,
 			fullMethod:            "test.PublicService/liveness",
-			expectedShouldLog:     true, // matches default pattern
+			expectedShouldLog:     false, // matches default pattern, so should NOT log
 			description:           "when nil patterns provided, should use default patterns",
 		},
 		{
 			name:                  "empty patterns, uses defaults",
 			methodExcludePatterns: []string{},
 			fullMethod:            "test.PrivateService/method",
-			expectedShouldLog:     true, // matches default pattern
+			expectedShouldLog:     false, // matches default pattern, so should NOT log
 			description:           "when empty patterns provided, should use default patterns",
 		},
 		{
 			name:                  "custom patterns appended to defaults",
-			methodExcludePatterns: []string{"*CustomService/.*$"},
+			methodExcludePatterns: []string{".*CustomService/.*$"},
 			fullMethod:            "test.CustomService/method",
-			expectedShouldLog:     true, // matches custom pattern
+			expectedShouldLog:     false, // matches custom pattern, so should NOT log
 			description:           "when custom patterns provided, should append to defaults",
 		},
 		{
 			name:                  "default patterns still work with custom patterns",
-			methodExcludePatterns: []string{"*CustomService/.*$"},
+			methodExcludePatterns: []string{".*CustomService/.*$"},
 			fullMethod:            "test.PublicService/liveness",
-			expectedShouldLog:     true, // matches default pattern
+			expectedShouldLog:     false, // matches default pattern, so should NOT log
 			description:           "default patterns should still work when custom patterns are provided",
 		},
 	}
@@ -158,21 +158,21 @@ func TestDeciderStreamServerInterceptor(t *testing.T) {
 			name:                  "nil patterns, uses defaults",
 			methodExcludePatterns: nil,
 			fullMethod:            "test.PublicService/liveness",
-			expectedShouldLog:     true, // matches default pattern
+			expectedShouldLog:     false, // matches default pattern, so should NOT log
 			description:           "when nil patterns provided, should use default patterns",
 		},
 		{
 			name:                  "empty patterns, uses defaults",
 			methodExcludePatterns: []string{},
 			fullMethod:            "test.PrivateService/method",
-			expectedShouldLog:     true, // matches default pattern
+			expectedShouldLog:     false, // matches default pattern, so should NOT log
 			description:           "when empty patterns provided, should use default patterns",
 		},
 		{
 			name:                  "custom patterns appended to defaults",
-			methodExcludePatterns: []string{"*CustomService/.*$"},
+			methodExcludePatterns: []string{".*CustomService/.*$"},
 			fullMethod:            "test.CustomService/method",
-			expectedShouldLog:     true, // matches custom pattern
+			expectedShouldLog:     false, // matches custom pattern, so should NOT log
 			description:           "when custom patterns provided, should append to defaults",
 		},
 	}
@@ -258,10 +258,10 @@ func TestDefaultMethodExcludePatterns(t *testing.T) {
 	hasPublicPattern := false
 	hasPrivatePattern := false
 	for _, pattern := range DefaultMethodExcludePatterns {
-		if pattern == "*PublicService/.*ness$" {
+		if pattern == ".*PublicService/.*ness$" { // Updated from "*PublicService/.*ness$"
 			hasPublicPattern = true
 		}
-		if pattern == "*PrivateService/.*$" {
+		if pattern == ".*PrivateService/.*$" { // Updated from "*PrivateService/.*$"
 			hasPrivatePattern = true
 		}
 	}
@@ -297,7 +297,7 @@ func TestInterceptorIntegration(t *testing.T) {
 	qt := quicktest.New(t)
 
 	// Test that the unary interceptor properly sets context
-	interceptor := DeciderUnaryServerInterceptor([]string{"*TestService/.*$"})
+	interceptor := DeciderUnaryServerInterceptor([]string{".*TestService/.*$"})
 
 	ctx := context.Background()
 	req := "test"
@@ -314,7 +314,7 @@ func TestInterceptorIntegration(t *testing.T) {
 
 	// Verify the context was modified
 	shouldLog := ShouldLogFromContext(capturedCtx)
-	qt.Check(shouldLog, quicktest.IsTrue) // should match the pattern
+	qt.Check(shouldLog, quicktest.IsFalse) // should match the pattern, so should NOT log
 
 	// Test with a method that doesn't match
 	info2 := &grpc.UnaryServerInfo{FullMethod: "test.OtherService/method"}
@@ -328,5 +328,5 @@ func TestInterceptorIntegration(t *testing.T) {
 	qt.Check(err, quicktest.IsNil)
 
 	shouldLog2 := ShouldLogFromContext(capturedCtx2)
-	qt.Check(shouldLog2, quicktest.IsTrue) // should not match the pattern, but still log
+	qt.Check(shouldLog2, quicktest.IsTrue) // should not match the pattern, so should log
 }
