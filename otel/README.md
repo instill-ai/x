@@ -4,7 +4,7 @@ OpenTelemetry setup and configuration for distributed tracing, metrics, and logg
 
 `x/otel` provides a unified interface for setting up OpenTelemetry observability components including tracing, metrics, and logging. It supports both local development (stdout) and production (OTLP) exporters with automatic resource configuration and cleanup management.
 
-## Overview
+## 1. Overview
 
 The `x/otel` package provides a comprehensive OpenTelemetry setup solution that:
 
@@ -15,9 +15,9 @@ The `x/otel` package provides a comprehensive OpenTelemetry setup solution that:
 5. **Global Integration** - Automatic setup of global providers and propagators
 6. **Error Handling** - Comprehensive error handling with cleanup on failures
 
-## Core Concepts
+## 2. Core Concepts
 
-### Observability Pillars
+### 2.1 Observability Pillars
 
 The package supports all three pillars of observability:
 
@@ -25,14 +25,14 @@ The package supports all three pillars of observability:
 - **Metrics**: Application and business metrics collection
 - **Logging**: Structured logging with trace correlation
 
-### Exporter Modes
+### 2.2 Exporter Modes
 
 The package supports two exporter modes:
 
 - **Local Development**: Uses stdout exporters for easy debugging
 - **Production**: Uses OTLP exporters for centralized observability
 
-### Resource Configuration
+### 2.3 Resource Configuration
 
 All telemetry data is automatically tagged with:
 
@@ -40,9 +40,9 @@ All telemetry data is automatically tagged with:
 - Service version
 - Host information
 
-## API Reference
+## 3. API Reference
 
-### Core Functions
+### 3.1 Core Functions
 
 #### `Setup(ctx context.Context, options ...Option) (*SetupResult, error)`
 
@@ -105,7 +105,7 @@ loggerProvider, err := otel.SetupLogging(ctx,
 )
 ```
 
-### Configuration Options
+### 3.2 Configuration Options
 
 #### `WithServiceName(name string) Option`
 
@@ -148,7 +148,7 @@ otel.WithCollectorEnable(true)  // Use OTLP for production
 otel.WithCollectorEnable(false) // Use stdout for development
 ```
 
-### Data Structures
+### 3.3 Data Structures
 
 #### `SetupResult`
 
@@ -177,9 +177,9 @@ type Options struct {
 }
 ```
 
-## Usage Examples
+## 4. Usage Examples
 
-### Basic Setup
+### 4.1 Basic Setup
 
 ```go
 package main
@@ -208,7 +208,7 @@ func main() {
 }
 ```
 
-### Production Setup
+### 4.2 Production Setup
 
 ```go
 package main
@@ -236,7 +236,7 @@ func main() {
 }
 ```
 
-### Individual Component Setup
+### 4.3 Individual Component Setup
 
 ```go
 package main
@@ -274,7 +274,7 @@ func main() {
 }
 ```
 
-### Using the Providers
+### 4.4 Using the Providers
 
 ```go
 package main
@@ -315,7 +315,7 @@ func main() {
 }
 ```
 
-### Error Handling
+### 4.5 Error Handling
 
 ```go
 package main
@@ -353,9 +353,9 @@ func main() {
 }
 ```
 
-## Best Practices
+## 5. Best Practices
 
-### 1. Service Configuration
+### 5.1 Service Configuration
 
 - **Use meaningful service names**: Choose descriptive names that identify your service
 - **Version your services**: Include version information for better debugging
@@ -371,7 +371,7 @@ otel.WithServiceName("service1")
 otel.WithServiceVersion("latest")
 ```
 
-### 2. Environment-Specific Configuration
+### 5.2 Environment-Specific Configuration
 
 - **Development**: Use stdout exporters for easy debugging
 - **Production**: Use OTLP exporters for centralized observability
@@ -396,7 +396,7 @@ func getOtelConfig() []otel.Option {
 }
 ```
 
-### 3. Resource Management
+### 5.3 Resource Management
 
 - **Always cleanup**: Use defer statements to ensure proper cleanup
 - **Handle cleanup errors**: Log cleanup errors but don't fail the application
@@ -422,7 +422,7 @@ func main() {
 }
 ```
 
-### 4. Error Handling
+### 5.4 Error Handling
 
 - **Graceful degradation**: Continue running even if OpenTelemetry setup fails
 - **Partial failures**: Handle cases where only some components fail to initialize
@@ -443,7 +443,7 @@ func setupObservability(ctx context.Context) (*otel.SetupResult, error) {
 }
 ```
 
-### 5. Performance Considerations
+### 5.5 Performance Considerations
 
 - **Batch processing**: Use batch processors for better performance
 - **Sampling**: Implement sampling strategies for high-traffic services
@@ -457,7 +457,7 @@ func configureSampling(tracerProvider *trace.TracerProvider) {
 }
 ```
 
-### 6. Testing
+### 5.6 Testing
 
 - **Mock providers**: Use mock providers for unit tests
 - **Integration tests**: Test the full setup and cleanup cycle
@@ -484,9 +484,9 @@ func TestObservabilitySetup(t *testing.T) {
 }
 ```
 
-## Migration Guide
+## 6. Migration Guide
 
-### From Manual OpenTelemetry Setup
+### 6.1 From Manual OpenTelemetry Setup
 
 **Before:**
 
@@ -531,7 +531,7 @@ func setupOpenTelemetry() error {
 }
 ```
 
-### From Different Observability Libraries
+### 6.2 From Different Observability Libraries
 
 **Before:**
 
@@ -562,9 +562,9 @@ func main() {
 }
 ```
 
-## Configuration Examples
+## 7. Configuration Examples
 
-### Development Environment
+### 7.1 Development Environment
 
 ```go
 func getDevConfig() []otel.Option {
@@ -576,7 +576,7 @@ func getDevConfig() []otel.Option {
 }
 ```
 
-### Staging Environment
+### 7.2 Staging Environment
 
 ```go
 func getStagingConfig() []otel.Option {
@@ -590,7 +590,7 @@ func getStagingConfig() []otel.Option {
 }
 ```
 
-### Production Environment
+### 7.3 Production Environment
 
 ```go
 func getProductionConfig() []otel.Option {
@@ -604,23 +604,23 @@ func getProductionConfig() []otel.Option {
 }
 ```
 
-## Performance Considerations
+## 8. Performance Considerations
 
 - **Minimal overhead**: The package is designed for minimal runtime overhead
 - **Efficient exporters**: Uses batch processors and efficient encoding
 - **Resource management**: Proper cleanup prevents memory leaks
 - **Configurable intervals**: Metrics are exported at configurable intervals (default: 10 seconds)
 
-## Troubleshooting
+## 9. Troubleshooting
 
-### Common Issues
+### 9.1 Common Issues
 
 1. **Connection refused errors**: Check collector endpoint and network connectivity
 2. **Memory leaks**: Ensure proper cleanup with defer statements
 3. **Missing telemetry data**: Verify service name and version configuration
 4. **Performance impact**: Monitor resource usage and adjust sampling if needed
 
-### Debug Mode
+### 9.2 Debug Mode
 
 For debugging, use stdout exporters:
 
@@ -631,7 +631,7 @@ result, err := otel.Setup(ctx,
 )
 ```
 
-### Health Checks
+### 9.3 Health Checks
 
 Monitor the health of your observability setup:
 
@@ -646,7 +646,7 @@ func checkObservabilityHealth(result *otel.SetupResult) error {
 }
 ```
 
-## Contributing
+## 10. Contributing
 
 When adding new features or functionality:
 
@@ -655,6 +655,6 @@ When adding new features or functionality:
 3. **Update documentation**: Keep this README current with new features
 4. **Consider backward compatibility**: Maintain compatibility with existing APIs
 
-## License
+## 11. License
 
 This package is part of the Instill AI x library and follows the same licensing terms.

@@ -4,7 +4,7 @@ A comprehensive gRPC server framework with built-in interceptors, logging, traci
 
 The `x/server` package provides a production-ready gRPC server setup with comprehensive middleware support, including logging, tracing, error handling, and gRPC-Gateway integration. It's designed to work seamlessly with the Instill AI platform and follows best practices for observability and error handling.
 
-## Overview
+## 1. Overview
 
 The `x/server` package provides:
 
@@ -14,10 +14,11 @@ The `x/server` package provides:
 4. **OpenTelemetry integration** - Automatic tracing and metrics collection
 5. **gRPC-Gateway support** - HTTP/JSON gateway with custom error handling
 6. **TLS/SSL support** - Secure communication with certificate-based authentication
+7. **Comprehensive testing** - Unit tests with minimock for all components
 
-## Core Components
+## 2. Core Components
 
-### gRPC Server Options (`grpc/options.go`)
+### 2.1 gRPC Server Options (`grpc/options.go`)
 
 The main entry point for creating gRPC server configurations with all necessary interceptors and options.
 
@@ -67,9 +68,9 @@ grpc.WithMethodExcludePatterns([]string{
 })
 ```
 
-### Interceptors
+### 2.2 Interceptors
 
-#### 1. Metadata Interceptor (`metadata.go`)
+#### 2.2.1 Metadata Interceptor (`interceptor/metadata.go`)
 
 Handles gRPC metadata preservation and error conversion for both unary and streaming RPCs.
 
@@ -98,7 +99,7 @@ Handles gRPC metadata preservation and error conversion for both unary and strea
 // No manual configuration required
 ```
 
-#### 2. Decider Interceptor (`decider.go`)
+#### 2.2.2 Decider Interceptor (`interceptor/decider.go`)
 
 Controls which gRPC calls should be logged based on method patterns.
 
@@ -124,7 +125,7 @@ patterns := []string{
 interceptor := interceptor.DeciderUnaryServerInterceptor(patterns)
 ```
 
-#### 3. Tracing Interceptor (`trace.go`)
+#### 2.2.3 Tracing Interceptor (`interceptor/trace.go`)
 
 Provides comprehensive request logging with trace context and OpenTelemetry integration.
 
@@ -152,7 +153,7 @@ Provides comprehensive request logging with trace context and OpenTelemetry inte
 }
 ```
 
-#### 4. Recovery Interceptor (`recovery.go`)
+#### 2.2.4 Recovery Interceptor (`interceptor/recovery.go`)
 
 Handles panics and converts them to gRPC errors.
 
@@ -162,7 +163,7 @@ Handles panics and converts them to gRPC errors.
 // Prevents server crashes from unhandled panics
 ```
 
-### gRPC-Gateway Support (`gateway/`)
+### 2.3 gRPC-Gateway Support (`gateway/misc.go`)
 
 Provides HTTP/JSON gateway functionality with custom error handling and response modification.
 
@@ -190,9 +191,9 @@ Controls which HTTP headers are forwarded to gRPC:
 - GitHub headers (`x-github*`)
 - Standard headers (`accept`, `request-id`, etc.)
 
-## API Reference
+## 3. API Reference
 
-### Core Functions
+### 3.1 Core Functions
 
 #### `grpc.NewServerOptionsAndCreds(options ...Option) ([]grpc.ServerOption, error)`
 
@@ -233,7 +234,7 @@ Modifies HTTP responses based on gRPC metadata.
 
 Handles gRPC errors in HTTP responses.
 
-### Configuration Options
+### 3.2 Configuration Options
 
 #### `grpc.WithServiceConfig(config client.HTTPSConfig)`
 
@@ -262,9 +263,9 @@ Enables or disables OpenTelemetry collector integration.
 
 Sets custom method exclusion patterns for logging.
 
-## Usage Examples
+## 4. Usage Examples
 
-### Basic gRPC Server Setup
+### 4.1 Basic gRPC Server Setup
 
 ```go
 package main
@@ -307,7 +308,7 @@ func main() {
 }
 ```
 
-### gRPC Server with TLS
+### 4.2 gRPC Server with TLS
 
 ```go
 // Create server options with TLS
@@ -328,7 +329,7 @@ if err != nil {
 log.Printf("TLS enabled: %v", opts != nil)
 ```
 
-### Custom Logging Patterns
+### 4.3 Custom Logging Patterns
 
 ```go
 // Exclude health checks and metrics from logging
@@ -343,7 +344,7 @@ opts, err := grpc.NewServerOptionsAndCreds(
 )
 ```
 
-### gRPC-Gateway Setup
+### 4.4 gRPC-Gateway Setup
 
 ```go
 package main
@@ -392,7 +393,7 @@ func main() {
 }
 ```
 
-### Custom Interceptor Chain
+### 4.5 Custom Interceptor Chain
 
 ```go
 // Create custom interceptor chain
@@ -418,9 +419,66 @@ server := grpc.NewServer(
 )
 ```
 
-## Best Practices
+## 5. Testing
 
-### 1. Service Configuration
+The server package includes comprehensive unit tests using **minimock** for all components.
+
+### 5.1 Mock Generation
+
+```bash
+cd mock && go generate ./generator.go
+```
+
+Generates mocks for: `Logger`, `OTELLogger`, `ServerStream`, `Marshaler`, `Decoder`, `Encoder`, `ProtoMessage`.
+
+### 5.2 Unit Testing Examples
+
+```go
+func TestTracingInterceptor_WithMocks(t *testing.T) {
+    qt := quicktest.New(t)
+    mc := minimock.NewController(t)
+
+    mockLogger := mockserver.NewLoggerMock(mc)
+    mockOTELLogger := mockserver.NewOTELLoggerMock(mc)
+
+    // Set up mock expectations
+    mockLogger.InfoMock.Expect("finished unary call", minimock.Any).Return()
+    mockOTELLogger.EmitMock.Expect(minimock.Any, minimock.Any).Return()
+
+    // Test interceptor behavior
+    interceptor := interceptor.TracingUnaryServerInterceptor("test-service", "v1.0.0", true)
+
+    // ... test implementation
+}
+
+func TestMetadataInterceptor_WithMocks(t *testing.T) {
+    qt := quicktest.New(t)
+    mc := minimock.NewController(t)
+
+    mockStream := mockserver.NewServerStreamMock(mc)
+
+    // Set up stream context expectations
+    mockStream.ContextMock.Expect().Return(context.Background())
+    mockStream.ContextMock.Expect().Return(context.Background())
+
+    // Test metadata handling
+    interceptor := interceptor.StreamAppendMetadataInterceptor
+
+    // ... test implementation
+}
+```
+
+#### Best Practices
+
+- **Use minimock for unit tests**: Isolated testing with generated mocks
+- **Test interceptor behavior**: Verify logging and error handling
+- **Test error scenarios**: Ensure proper error conversion and logging
+- **Use quicktest assertions**: Consistent test assertions
+- **Mock external dependencies**: Avoid external service dependencies in unit tests
+
+## 6. Best Practices
+
+### 6.1 Service Configuration
 
 - **Use descriptive service names**: Help with log aggregation and tracing
 - **Version your services**: Enable tracking of service versions in logs
@@ -434,7 +492,7 @@ opts, err := grpc.NewServerOptionsAndCreds(
 )
 ```
 
-### 2. Logging Strategy
+### 6.2 Logging Strategy
 
 - **Exclude noisy endpoints**: Health checks, metrics, and internal calls
 - **Use consistent patterns**: Standardize method exclusion patterns across services
@@ -451,7 +509,7 @@ patterns := []string{
 }
 ```
 
-### 3. Error Handling
+### 6.3 Error Handling
 
 - **Use x/errors package**: Leverage the integrated error handling
 - **Preserve error context**: Let interceptors handle error conversion
@@ -473,7 +531,7 @@ func (s *Service) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*p
 }
 ```
 
-### 4. Security
+### 6.4 Security
 
 - **Use TLS in production**: Always configure certificates for production
 - **Validate certificates**: Ensure proper certificate validation
@@ -492,7 +550,7 @@ opts, err := grpc.NewServerOptionsAndCreds(
 )
 ```
 
-### 5. Observability
+### 6.5 Observability
 
 - **Enable OpenTelemetry**: For comprehensive tracing and metrics
 - **Monitor request patterns**: Use the built-in request logging
@@ -507,25 +565,9 @@ opts, err := grpc.NewServerOptionsAndCreds(
 )
 ```
 
-### 6. Testing
+## 7. Migration Guide
 
-- **Test interceptor behavior**: Verify logging and error handling
-- **Mock external dependencies**: Use the provided mock utilities
-- **Test error scenarios**: Ensure proper error conversion and logging
-
-```go
-func TestService_WithInterceptors(t *testing.T) {
-    // Use the provided mock utilities
-    mockLogger := &interceptor.MockLogger{}
-
-    // Test your service with interceptors
-    // Verify logging behavior and error handling
-}
-```
-
-## Migration Guide
-
-### From Standard gRPC Server
+### 7.1 From Standard gRPC Server
 
 **Before:**
 
@@ -554,7 +596,7 @@ server := grpc.NewServer(opts...)
 // Automatic structured logging
 ```
 
-### Adding Custom Interceptors
+### 7.2 Adding Custom Interceptors
 
 ```go
 // Create base options
@@ -570,23 +612,23 @@ unaryInterceptors := append([]grpc.UnaryServerInterceptor{
 server := grpc.NewServer(grpc.UnaryInterceptor(unaryInterceptors...))
 ```
 
-## Performance Considerations
+## 8. Performance Considerations
 
 - **Minimal overhead**: Interceptors are optimized for performance
 - **Selective logging**: Use exclusion patterns to reduce log volume
 - **Efficient error handling**: Error conversion is optimized for common cases
 - **Memory efficient**: Context propagation is designed for minimal allocations
 
-## Troubleshooting
+## 9. Troubleshooting
 
-### Common Issues
+### 9.1 Common Issues
 
 1. **Missing TLS certificates**: Ensure certificate files exist and are readable
 2. **Log volume too high**: Adjust method exclusion patterns
 3. **OpenTelemetry not working**: Verify OTEL collector is running and accessible
 4. **gRPC-Gateway errors**: Check header matcher configuration
 
-### Debug Mode
+### 9.2 Debug Mode
 
 Enable debug logging to troubleshoot interceptor behavior:
 
@@ -601,16 +643,16 @@ opts, err := grpc.NewServerOptionsAndCreds(
 )
 ```
 
-## Contributing
+## 10. Contributing
 
 When adding new functionality:
 
 1. **Follow existing patterns**: Use the established interceptor patterns
-2. **Add comprehensive tests**: Include unit tests for new interceptors
+2. **Add comprehensive tests**: Include unit tests with minimock for new interceptors
 3. **Update documentation**: Keep this README current with new features
 4. **Consider performance**: Ensure new interceptors don't impact performance
 5. **Add examples**: Provide usage examples for new features
 
-## License
+## 11. License
 
 This package is part of the Instill AI x library and follows the same licensing terms.
