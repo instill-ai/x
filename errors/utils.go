@@ -6,6 +6,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"gorm.io/gorm"
 )
 
 // ConvertToGRPCError converts an error to a gRPC status error
@@ -43,14 +44,16 @@ func ConvertGRPCCode(err error) codes.Code {
 
 	// Map domain errors to gRPC codes
 	switch {
-	case errors.Is(err, ErrAlreadyExists):
+	case errors.Is(err, ErrAlreadyExists),
+		errors.Is(err, gorm.ErrDuplicatedKey),
+		isDuplicateKeyErr(err):
 		return codes.AlreadyExists
 	case
-		isDuplicateKeyErr(err),
 		errors.Is(err, ErrNotFound),
 		errors.Is(err, ErrNoDataDeleted),
 		errors.Is(err, ErrNoDataUpdated),
-		errors.Is(err, ErrMembershipNotFound):
+		errors.Is(err, ErrMembershipNotFound),
+		errors.Is(err, gorm.ErrRecordNotFound):
 		return codes.NotFound
 	case
 		errors.Is(err, ErrInvalidArgument),

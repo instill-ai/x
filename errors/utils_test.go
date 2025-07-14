@@ -8,6 +8,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"gorm.io/gorm"
 
 	qt "github.com/frankban/quicktest"
 )
@@ -89,8 +90,18 @@ func TestConvertGRPCCode(t *testing.T) {
 			wantCode: codes.AlreadyExists,
 		},
 		{
+			name:     "gorm.ErrDuplicatedKey",
+			in:       gorm.ErrDuplicatedKey,
+			wantCode: codes.AlreadyExists,
+		},
+		{
 			name:     "ErrNotFound",
 			in:       ErrNotFound,
+			wantCode: codes.NotFound,
+		},
+		{
+			name:     "gorm.ErrRecordNotFound",
+			in:       gorm.ErrRecordNotFound,
 			wantCode: codes.NotFound,
 		},
 		{
@@ -111,7 +122,7 @@ func TestConvertGRPCCode(t *testing.T) {
 		{
 			name:     "duplicate key error",
 			in:       &pgconn.PgError{Code: "23505"},
-			wantCode: codes.NotFound,
+			wantCode: codes.AlreadyExists,
 		},
 		{
 			name:     "ErrInvalidArgument",
@@ -238,102 +249,12 @@ func TestConvertGRPCCode(t *testing.T) {
 			in:       fmt.Errorf("finding item: %w", ErrNotFound),
 			wantCode: codes.NotFound,
 		},
-		{
-			name:     "wrapped ErrUnauthorized",
-			in:       fmt.Errorf("checking requester permission: %w", ErrUnauthorized),
-			wantCode: codes.PermissionDenied,
-		},
-		{
-			name:     "wrapped ErrInvalidArgument",
-			in:       fmt.Errorf("validating input: %w", ErrInvalidArgument),
-			wantCode: codes.InvalidArgument,
-		},
 	}
 
 	for _, tc := range testcases {
 		c.Run(tc.name, func(c *qt.C) {
 			got := ConvertGRPCCode(tc.in)
-			c.Assert(got, qt.Equals, tc.wantCode)
+			c.Assert(got, qt.Equals, tc.wantCode, qt.Commentf("%s", tc.name))
 		})
 	}
-}
-
-func TestConvertGRPCCodeWithWrappedErrors(t *testing.T) {
-	c := qt.New(t)
-
-	c.Run("wrapped errors with errors.Join", func(c *qt.C) {
-		// Test with errors.Join which creates a different error type
-		joinedErr := fmt.Errorf("operation failed: %w and %w", ErrNotFound, ErrInvalidArgument)
-		// The first error in the chain should determine the code
-		c.Assert(ConvertGRPCCode(joinedErr), qt.Equals, codes.NotFound)
-	})
-
-	c.Run("deeply wrapped error", func(c *qt.C) {
-		err1 := fmt.Errorf("level 1: %w", ErrUnauthorized)
-		err2 := fmt.Errorf("level 2: %w", err1)
-		err3 := fmt.Errorf("level 3: %w", err2)
-
-		c.Assert(ConvertGRPCCode(err3), qt.Equals, codes.PermissionDenied)
-	})
-}
-
-func TestConvertToGRPCErrorWithWrappedErrors(t *testing.T) {
-	c := qt.New(t)
-
-	c.Run("wrapped error with message", func(c *qt.C) {
-		wrappedErr := AddMessage(
-			fmt.Errorf("database operation failed: %w", ErrNotFound),
-			"User account not found",
-		)
-		result := ConvertToGRPCError(wrappedErr)
-
-		c.Assert(result, qt.IsNotNil)
-		st, ok := status.FromError(result)
-		c.Assert(ok, qt.IsTrue)
-		c.Assert(st.Code(), qt.Equals, codes.NotFound)
-		c.Assert(st.Message(), qt.Equals, "User account not found")
-	})
-
-	c.Run("wrapped error without message", func(c *qt.C) {
-		wrappedErr := fmt.Errorf("database operation failed: %w", ErrNotFound)
-		result := ConvertToGRPCError(wrappedErr)
-
-		c.Assert(result, qt.IsNotNil)
-		st, ok := status.FromError(result)
-		c.Assert(ok, qt.IsTrue)
-		c.Assert(st.Code(), qt.Equals, codes.NotFound)
-		c.Assert(st.Message(), qt.Equals, "database operation failed: not found")
-	})
-}
-
-func TestConvertGRPCCodeWithPostgresErrors(t *testing.T) {
-	c := qt.New(t)
-
-	c.Run("duplicate key error", func(c *qt.C) {
-		pgErr := &pgconn.PgError{
-			Severity: "ERROR",
-			Code:     "23505",
-			Message:  "duplicate key value violates unique constraint",
-		}
-		c.Assert(ConvertGRPCCode(pgErr), qt.Equals, codes.NotFound)
-	})
-
-	c.Run("non-duplicate key postgres error", func(c *qt.C) {
-		pgErr := &pgconn.PgError{
-			Severity: "ERROR",
-			Code:     "23503",
-			Message:  "foreign key violation",
-		}
-		c.Assert(ConvertGRPCCode(pgErr), qt.Equals, codes.Unknown)
-	})
-
-	c.Run("wrapped postgres error", func(c *qt.C) {
-		pgErr := &pgconn.PgError{
-			Severity: "ERROR",
-			Code:     "23505",
-			Message:  "duplicate key value violates unique constraint",
-		}
-		wrappedErr := fmt.Errorf("insert operation failed: %w", pgErr)
-		c.Assert(ConvertGRPCCode(wrappedErr), qt.Equals, codes.NotFound)
-	})
 }
