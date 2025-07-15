@@ -67,6 +67,10 @@ func createTestGRPCServer(t testing.TB) (*grpc.Server, int) {
 	return s, port
 }
 
+// ============================================================================
+// Mock Tests (Updated for new registry-based approach)
+// ============================================================================
+
 func TestNewClient_WithMocks(t *testing.T) {
 	qt := quicktest.New(t)
 	mc := minimock.NewController(t)
@@ -99,23 +103,27 @@ func TestNewClient_WithMocks(t *testing.T) {
 	qt.Check(mockMetadataPropagator, quicktest.Not(quicktest.IsNil))
 }
 
-func TestClientCreator_WithMocks(t *testing.T) {
+func TestClientRegistry_WithMocks(t *testing.T) {
 	qt := quicktest.New(t)
-	mc := minimock.NewController(t)
 
-	// Create mock client creator
-	mockCreator := mockclient.NewClientCreatorMock(mc)
+	// Test that the client registry contains expected client types
+	expectedTypes := []string{
+		"pipelinev1beta.PipelinePublicServiceClient",
+		"pipelinev1beta.PipelinePrivateServiceClient",
+		"artifactv1alpha.ArtifactPublicServiceClient",
+		"artifactv1alpha.ArtifactPrivateServiceClient",
+		"modelv1alpha.ModelPublicServiceClient",
+		"modelv1alpha.ModelPrivateServiceClient",
+		"mgmtv1beta.MgmtPublicServiceClient",
+		"mgmtv1beta.MgmtPrivateServiceClient",
+		"usagev1beta.UsageServiceClient",
+	}
 
-	// Set up mock expectations
-	mockCreator.CreateClientMock.Expect(nil).Return(pipelinepb.NewPipelinePublicServiceClient(nil))
-	mockCreator.IsPublicMock.Expect().Return(true)
-
-	// Test the mock
-	client := mockCreator.CreateClient(nil)
-	isPublic := mockCreator.IsPublic()
-
-	qt.Check(client, quicktest.Not(quicktest.IsNil))
-	qt.Check(isPublic, quicktest.IsTrue)
+	for _, clientType := range expectedTypes {
+		info, exists := clientRegistry[clientType]
+		qt.Check(exists, quicktest.IsTrue, quicktest.Commentf("Client type %s should exist in registry", clientType))
+		qt.Check(info.creator, quicktest.Not(quicktest.IsNil), quicktest.Commentf("Creator function for %s should not be nil", clientType))
+	}
 }
 
 func TestConnectionManager_WithMocks(t *testing.T) {
@@ -184,7 +192,7 @@ func TestMetadataPropagator_WithMocks(t *testing.T) {
 }
 
 // ============================================================================
-// Integration Tests (keeping existing tests)
+// Integration Tests (Updated for new registry-based approach)
 // ============================================================================
 
 func TestNewClient_PipelinePublic(t *testing.T) {
@@ -681,7 +689,86 @@ func TestNewClient_OptionsPattern(t *testing.T) {
 }
 
 // ============================================================================
-// Benchmarks
+// New Tests for Registry-based Approach
+// ============================================================================
+
+func TestClientRegistry_TypeNames(t *testing.T) {
+	qt := quicktest.New(t)
+
+	// Test that the registry contains the correct type names
+	expectedTypeNames := map[string]bool{
+		"pipelinev1beta.PipelinePublicServiceClient":   true,
+		"pipelinev1beta.PipelinePrivateServiceClient":  false,
+		"artifactv1alpha.ArtifactPublicServiceClient":  true,
+		"artifactv1alpha.ArtifactPrivateServiceClient": false,
+		"modelv1alpha.ModelPublicServiceClient":        true,
+		"modelv1alpha.ModelPrivateServiceClient":       false,
+		"mgmtv1beta.MgmtPublicServiceClient":           true,
+		"mgmtv1beta.MgmtPrivateServiceClient":          false,
+		"usagev1beta.UsageServiceClient":               true,
+	}
+
+	for typeName, isPublic := range expectedTypeNames {
+		info, exists := clientRegistry[typeName]
+		qt.Check(exists, quicktest.IsTrue, quicktest.Commentf("Type %s should exist in registry", typeName))
+		qt.Check(info.isPublic, quicktest.Equals, isPublic, quicktest.Commentf("Type %s should have correct public flag", typeName))
+	}
+}
+
+func TestNewClient_TypeReflection(t *testing.T) {
+	qt := quicktest.New(t)
+
+	svc := createTestServiceConfig("localhost", 8080, 8081)
+
+	// Test that the reflection-based type detection works correctly
+	client, closeFn, err := NewClient[pipelinepb.PipelinePublicServiceClient](
+		WithServiceConfig(svc),
+		WithSetOTELClientHandler(false),
+	)
+
+	// The client creation should succeed even without a server running
+	// because gRPC clients can be created without an active connection
+	qt.Assert(err, quicktest.IsNil)
+	qt.Assert(client, quicktest.Not(quicktest.IsNil))
+	qt.Assert(closeFn, quicktest.Not(quicktest.IsNil))
+
+	// Clean up
+	if closeFn != nil {
+		defer func() {
+			if closeErr := closeFn(); closeErr != nil {
+				t.Logf("failed to close client: %v", closeErr)
+			}
+		}()
+	}
+
+	// Test that we can actually use the client (this will fail due to no server)
+	// but the client object itself should be valid
+	qt.Check(client, quicktest.Not(quicktest.IsNil))
+}
+
+func TestNewClient_InterfaceType(t *testing.T) {
+	qt := quicktest.New(t)
+
+	svc := createTestServiceConfig("localhost", 8080, 8081)
+
+	// Test with interface type (should be handled by the nil check in the code)
+	type TestInterface interface {
+		SomeMethod()
+	}
+
+	client, closeFn, err := NewClient[TestInterface](
+		WithServiceConfig(svc),
+		WithSetOTELClientHandler(false),
+	)
+
+	qt.Assert(err, quicktest.Not(quicktest.IsNil))
+	qt.Check(err.Error(), quicktest.Contains, "unsupported client type")
+	qt.Assert(client, quicktest.IsNil)
+	qt.Assert(closeFn, quicktest.IsNil)
+}
+
+// ============================================================================
+// Benchmarks (Updated for new registry-based approach)
 // ============================================================================
 
 func BenchmarkNewClient_PipelinePublic(b *testing.B) {

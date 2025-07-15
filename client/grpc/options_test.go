@@ -18,8 +18,9 @@ func TestNewOptions(t *testing.T) {
 			name:    "default options",
 			options: []Option{},
 			expected: &Options{
-				ServiceConfig:        client.ServiceConfig{},
-				SetOTELClientHandler: false,
+				ServiceConfig:              client.ServiceConfig{},
+				SetOTELClientHandler:       false,
+				MethodTraceExcludePatterns: []string{},
 			},
 		},
 		{
@@ -37,7 +38,8 @@ func TestNewOptions(t *testing.T) {
 					PublicPort:  8080,
 					PrivatePort: 8081,
 				},
-				SetOTELClientHandler: false,
+				SetOTELClientHandler:       false,
+				MethodTraceExcludePatterns: []string{},
 			},
 		},
 		{
@@ -63,7 +65,8 @@ func TestNewOptions(t *testing.T) {
 						Key:  "/path/to/key.pem",
 					},
 				},
-				SetOTELClientHandler: false,
+				SetOTELClientHandler:       false,
+				MethodTraceExcludePatterns: []string{},
 			},
 		},
 		{
@@ -72,8 +75,26 @@ func TestNewOptions(t *testing.T) {
 				WithSetOTELClientHandler(true),
 			},
 			expected: &Options{
+				ServiceConfig:              client.ServiceConfig{},
+				SetOTELClientHandler:       true,
+				MethodTraceExcludePatterns: []string{},
+			},
+		},
+		{
+			name: "with method trace exclude patterns",
+			options: []Option{
+				WithMethodTraceExcludePatterns([]string{
+					".*TestService/.*",
+					".*DebugService/.*",
+				}),
+			},
+			expected: &Options{
 				ServiceConfig:        client.ServiceConfig{},
-				SetOTELClientHandler: true,
+				SetOTELClientHandler: false,
+				MethodTraceExcludePatterns: []string{
+					".*TestService/.*",
+					".*DebugService/.*",
+				},
 			},
 		},
 		{
@@ -89,6 +110,10 @@ func TestNewOptions(t *testing.T) {
 					},
 				}),
 				WithSetOTELClientHandler(true),
+				WithMethodTraceExcludePatterns([]string{
+					".*TestService/.*",
+					".*DebugService/.*",
+				}),
 			},
 			expected: &Options{
 				ServiceConfig: client.ServiceConfig{
@@ -101,6 +126,10 @@ func TestNewOptions(t *testing.T) {
 					},
 				},
 				SetOTELClientHandler: true,
+				MethodTraceExcludePatterns: []string{
+					".*TestService/.*",
+					".*DebugService/.*",
+				},
 			},
 		},
 	}
@@ -155,6 +184,51 @@ func TestWithSetOTELClientHandler(t *testing.T) {
 	}
 }
 
+func TestWithMethodTraceExcludePatterns(t *testing.T) {
+	tests := []struct {
+		name     string
+		patterns []string
+	}{
+		{
+			name:     "empty patterns",
+			patterns: []string{},
+		},
+		{
+			name: "single pattern",
+			patterns: []string{
+				".*TestService/.*",
+			},
+		},
+		{
+			name: "multiple patterns",
+			patterns: []string{
+				".*TestService/.*",
+				".*DebugService/.*",
+				".*HealthService/.*",
+			},
+		},
+		{
+			name: "patterns with special characters",
+			patterns: []string{
+				".*PublicService/.*ness$",
+				".*PrivateService/.*$",
+				".*UsageService/.*$",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			qt := quicktest.New(t)
+			option := WithMethodTraceExcludePatterns(tt.patterns)
+			opts := &Options{}
+			option(opts)
+
+			qt.Assert(opts.MethodTraceExcludePatterns, quicktest.DeepEquals, tt.patterns)
+		})
+	}
+}
+
 func TestNewClientOptionsAndCreds_DefaultOptions(t *testing.T) {
 	qt := quicktest.New(t)
 
@@ -173,6 +247,22 @@ func TestNewClientOptionsAndCreds_WithCustomOptions(t *testing.T) {
 
 	dialOpts, err := NewClientOptionsAndCreds(
 		WithSetOTELClientHandler(true),
+	)
+
+	qt.Assert(err, quicktest.IsNil)
+	qt.Assert(dialOpts, quicktest.Not(quicktest.IsNil))
+	qt.Check(len(dialOpts) > 0, quicktest.IsTrue)
+}
+
+func TestNewClientOptionsAndCreds_WithMethodTraceExcludePatterns(t *testing.T) {
+	qt := quicktest.New(t)
+
+	dialOpts, err := NewClientOptionsAndCreds(
+		WithSetOTELClientHandler(true),
+		WithMethodTraceExcludePatterns([]string{
+			".*TestService/.*",
+			".*DebugService/.*",
+		}),
 	)
 
 	qt.Assert(err, quicktest.IsNil)
@@ -221,6 +311,23 @@ func TestNewClientOptionsAndCreds_OTELStatsHandler(t *testing.T) {
 	qt.Check(len(dialOptsWithOTEL) >= len(dialOpts), quicktest.IsTrue)
 }
 
+func TestNewClientOptionsAndCreds_OTELStatsHandlerWithExcludePatterns(t *testing.T) {
+	qt := quicktest.New(t)
+
+	// Test with OTEL collector enabled and exclude patterns
+	dialOptsWithOTEL, err := NewClientOptionsAndCreds(
+		WithSetOTELClientHandler(true),
+		WithMethodTraceExcludePatterns([]string{
+			".*TestService/.*",
+			".*DebugService/.*",
+		}),
+	)
+	qt.Assert(err, quicktest.IsNil)
+
+	// Should have options when OTEL is enabled with exclude patterns
+	qt.Check(len(dialOptsWithOTEL) > 0, quicktest.IsTrue)
+}
+
 func TestNewClientOptionsAndCreds_DialOptionsStructure(t *testing.T) {
 	qt := quicktest.New(t)
 
@@ -257,6 +364,9 @@ func TestNewClientOptionsAndCreds_MultipleOptions(t *testing.T) {
 
 	dialOpts, err := NewClientOptionsAndCreds(
 		WithSetOTELClientHandler(true),
+		WithMethodTraceExcludePatterns([]string{
+			".*TestService/.*",
+		}),
 	)
 
 	qt.Assert(err, quicktest.IsNil)
@@ -305,8 +415,9 @@ func TestNewOptions_WithNilOptions(t *testing.T) {
 	result := newOptions(nilOption)
 
 	expected := &Options{
-		ServiceConfig:        client.ServiceConfig{},
-		SetOTELClientHandler: false,
+		ServiceConfig:              client.ServiceConfig{},
+		SetOTELClientHandler:       false,
+		MethodTraceExcludePatterns: []string{},
 	}
 
 	qt.Assert(result, quicktest.CmpEquals(), expected)
@@ -322,11 +433,69 @@ func TestNewOptions_WithMixedNilAndValidOptions(t *testing.T) {
 	result := newOptions(nilOption, validOption)
 
 	expected := &Options{
-		ServiceConfig:        client.ServiceConfig{},
-		SetOTELClientHandler: true,
+		ServiceConfig:              client.ServiceConfig{},
+		SetOTELClientHandler:       true,
+		MethodTraceExcludePatterns: []string{},
 	}
 
 	qt.Assert(result, quicktest.CmpEquals(), expected)
+}
+
+func TestCreateFilterTraceDecider(t *testing.T) {
+	qt := quicktest.New(t)
+
+	// Test with custom patterns
+	customPatterns := []string{
+		".*TestService/.*",
+		".*DebugService/.*",
+	}
+
+	filter := createFilterTraceDecider(customPatterns)
+
+	// Test that the filter function works correctly
+	// This is a basic test - in practice you'd want to test with actual RPC tag info
+	qt.Assert(filter, quicktest.Not(quicktest.IsNil))
+}
+
+func TestDefaultMethodTraceExcludePatterns(t *testing.T) {
+	qt := quicktest.New(t)
+
+	// Test that default patterns are defined
+	qt.Check(len(defaultMethodTraceExcludePatterns) > 0, quicktest.IsTrue)
+
+	// Test that default patterns contain expected patterns
+	expectedPatterns := []string{
+		".*PublicService/.*ness$",
+		".*PrivateService/.*$",
+		".*UsageService/.*$",
+	}
+
+	for _, expectedPattern := range expectedPatterns {
+		found := false
+		for _, pattern := range defaultMethodTraceExcludePatterns {
+			if pattern == expectedPattern {
+				found = true
+				break
+			}
+		}
+		qt.Check(found, quicktest.IsTrue, quicktest.Commentf("Expected pattern %s not found in default patterns", expectedPattern))
+	}
+}
+
+func TestMethodTraceExcludePatterns_Integration(t *testing.T) {
+	qt := quicktest.New(t)
+
+	// Test that method trace exclude patterns work with OTEL handler
+	dialOpts, err := NewClientOptionsAndCreds(
+		WithSetOTELClientHandler(true),
+		WithMethodTraceExcludePatterns([]string{
+			".*CustomService/.*",
+		}),
+	)
+
+	qt.Assert(err, quicktest.IsNil)
+	qt.Assert(dialOpts, quicktest.Not(quicktest.IsNil))
+	qt.Check(len(dialOpts) > 0, quicktest.IsTrue)
 }
 
 func TestClientTypeConstants(t *testing.T) {
@@ -373,6 +542,21 @@ func BenchmarkNewClientOptionsAndCreds_WithOptions(b *testing.B) {
 	}
 }
 
+func BenchmarkNewClientOptionsAndCreds_WithExcludePatterns(b *testing.B) {
+	for b.Loop() {
+		_, err := NewClientOptionsAndCreds(
+			WithSetOTELClientHandler(true),
+			WithMethodTraceExcludePatterns([]string{
+				".*TestService/.*",
+				".*DebugService/.*",
+			}),
+		)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkNewOptions(b *testing.B) {
 	options := []Option{
 		WithServiceConfig(client.ServiceConfig{
@@ -385,6 +569,10 @@ func BenchmarkNewOptions(b *testing.B) {
 			},
 		}),
 		WithSetOTELClientHandler(true),
+		WithMethodTraceExcludePatterns([]string{
+			".*TestService/.*",
+			".*DebugService/.*",
+		}),
 	}
 
 	b.ResetTimer()

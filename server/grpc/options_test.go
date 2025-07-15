@@ -7,6 +7,7 @@ import (
 
 	"github.com/frankban/quicktest"
 	"github.com/instill-ai/x/client"
+	"google.golang.org/grpc/stats"
 )
 
 func TestNewGRPCOptions(t *testing.T) {
@@ -20,11 +21,12 @@ func TestNewGRPCOptions(t *testing.T) {
 			name:    "default options",
 			options: []Option{},
 			expected: &Options{
-				ServiceName:           "unknown",
-				ServiceVersion:        "unknown",
-				HTTPSConfig:           client.HTTPSConfig{},
-				MethodExcludePatterns: []string{},
-				SetOTELServerHandler:  false,
+				ServiceName:                "unknown",
+				ServiceVersion:             "unknown",
+				HTTPSConfig:                client.HTTPSConfig{},
+				MethodLogExcludePatterns:   []string{},
+				MethodTraceExcludePatterns: []string{},
+				SetOTELServerHandler:       false,
 			},
 		},
 		{
@@ -33,11 +35,12 @@ func TestNewGRPCOptions(t *testing.T) {
 				WithServiceName("test-service"),
 			},
 			expected: &Options{
-				ServiceName:           "test-service",
-				ServiceVersion:        "unknown",
-				HTTPSConfig:           client.HTTPSConfig{},
-				MethodExcludePatterns: []string{},
-				SetOTELServerHandler:  false,
+				ServiceName:                "test-service",
+				ServiceVersion:             "unknown",
+				HTTPSConfig:                client.HTTPSConfig{},
+				MethodLogExcludePatterns:   []string{},
+				MethodTraceExcludePatterns: []string{},
+				SetOTELServerHandler:       false,
 			},
 		},
 		{
@@ -46,11 +49,12 @@ func TestNewGRPCOptions(t *testing.T) {
 				WithServiceVersion("v1.0.0"),
 			},
 			expected: &Options{
-				ServiceName:           "unknown",
-				ServiceVersion:        "v1.0.0",
-				HTTPSConfig:           client.HTTPSConfig{},
-				MethodExcludePatterns: []string{},
-				SetOTELServerHandler:  false,
+				ServiceName:                "unknown",
+				ServiceVersion:             "v1.0.0",
+				HTTPSConfig:                client.HTTPSConfig{},
+				MethodLogExcludePatterns:   []string{},
+				MethodTraceExcludePatterns: []string{},
+				SetOTELServerHandler:       false,
 			},
 		},
 		{
@@ -62,24 +66,40 @@ func TestNewGRPCOptions(t *testing.T) {
 				}),
 			},
 			expected: &Options{
-				ServiceName:           "unknown",
-				ServiceVersion:        "unknown",
-				HTTPSConfig:           client.HTTPSConfig{Cert: "/path/to/cert.pem", Key: "/path/to/key.pem"},
-				MethodExcludePatterns: []string{},
-				SetOTELServerHandler:  false,
+				ServiceName:                "unknown",
+				ServiceVersion:             "unknown",
+				HTTPSConfig:                client.HTTPSConfig{Cert: "/path/to/cert.pem", Key: "/path/to/key.pem"},
+				MethodLogExcludePatterns:   []string{},
+				MethodTraceExcludePatterns: []string{},
+				SetOTELServerHandler:       false,
 			},
 		},
 		{
-			name: "with method exclude patterns",
+			name: "with method log exclude patterns",
 			options: []Option{
-				WithMethodExcludePatterns([]string{"*.Health/*", "*.Metrics/*"}),
+				WithMethodLogExcludePatterns([]string{"*.Health/*", "*.Metrics/*"}),
 			},
 			expected: &Options{
-				ServiceName:           "unknown",
-				ServiceVersion:        "unknown",
-				HTTPSConfig:           client.HTTPSConfig{},
-				MethodExcludePatterns: []string{"*.Health/*", "*.Metrics/*"},
-				SetOTELServerHandler:  false,
+				ServiceName:                "unknown",
+				ServiceVersion:             "unknown",
+				HTTPSConfig:                client.HTTPSConfig{},
+				MethodLogExcludePatterns:   []string{"*.Health/*", "*.Metrics/*"},
+				MethodTraceExcludePatterns: []string{},
+				SetOTELServerHandler:       false,
+			},
+		},
+		{
+			name: "with method trace exclude patterns",
+			options: []Option{
+				WithMethodTraceExcludePatterns([]string{"*.TestService/*", "*.DebugService/*"}),
+			},
+			expected: &Options{
+				ServiceName:                "unknown",
+				ServiceVersion:             "unknown",
+				HTTPSConfig:                client.HTTPSConfig{},
+				MethodLogExcludePatterns:   []string{},
+				MethodTraceExcludePatterns: []string{"*.TestService/*", "*.DebugService/*"},
+				SetOTELServerHandler:       false,
 			},
 		},
 		{
@@ -88,11 +108,12 @@ func TestNewGRPCOptions(t *testing.T) {
 				WithSetOTELServerHandler(true),
 			},
 			expected: &Options{
-				ServiceName:           "unknown",
-				ServiceVersion:        "unknown",
-				HTTPSConfig:           client.HTTPSConfig{},
-				MethodExcludePatterns: []string{},
-				SetOTELServerHandler:  true,
+				ServiceName:                "unknown",
+				ServiceVersion:             "unknown",
+				HTTPSConfig:                client.HTTPSConfig{},
+				MethodLogExcludePatterns:   []string{},
+				MethodTraceExcludePatterns: []string{},
+				SetOTELServerHandler:       true,
 			},
 		},
 		{
@@ -104,15 +125,17 @@ func TestNewGRPCOptions(t *testing.T) {
 					Cert: "/path/to/cert.pem",
 					Key:  "/path/to/key.pem",
 				}),
-				WithMethodExcludePatterns([]string{"*.Health/*"}),
+				WithMethodLogExcludePatterns([]string{"*.Health/*"}),
+				WithMethodTraceExcludePatterns([]string{"*.TestService/*"}),
 				WithSetOTELServerHandler(true),
 			},
 			expected: &Options{
-				ServiceName:           "test-service",
-				ServiceVersion:        "v1.0.0",
-				HTTPSConfig:           client.HTTPSConfig{Cert: "/path/to/cert.pem", Key: "/path/to/key.pem"},
-				MethodExcludePatterns: []string{"*.Health/*"},
-				SetOTELServerHandler:  true,
+				ServiceName:                "test-service",
+				ServiceVersion:             "v1.0.0",
+				HTTPSConfig:                client.HTTPSConfig{Cert: "/path/to/cert.pem", Key: "/path/to/key.pem"},
+				MethodLogExcludePatterns:   []string{"*.Health/*"},
+				MethodTraceExcludePatterns: []string{"*.TestService/*"},
+				SetOTELServerHandler:       true,
 			},
 		},
 	}
@@ -180,14 +203,92 @@ func TestWithServiceVersion(t *testing.T) {
 	qt.Check(opts.ServiceVersion, quicktest.Equals, serviceVersion)
 }
 
-func TestWithMethodExcludePatterns(t *testing.T) {
+func TestWithMethodLogExcludePatterns(t *testing.T) {
 	qt := quicktest.New(t)
 	patterns := []string{"*.Health/*", "*.Metrics/*", "*.Internal/*"}
-	option := WithMethodExcludePatterns(patterns)
+	option := WithMethodLogExcludePatterns(patterns)
 	opts := &Options{}
 	option(opts)
 
-	qt.Check(opts.MethodExcludePatterns, quicktest.DeepEquals, patterns)
+	qt.Check(opts.MethodLogExcludePatterns, quicktest.DeepEquals, patterns)
+}
+
+func TestWithMethodTraceExcludePatterns(t *testing.T) {
+	tests := []struct {
+		name     string
+		patterns []string
+	}{
+		{
+			name:     "empty patterns",
+			patterns: []string{},
+		},
+		{
+			name: "single pattern",
+			patterns: []string{
+				"*.TestService/*",
+			},
+		},
+		{
+			name: "multiple patterns",
+			patterns: []string{
+				"*.TestService/*",
+				"*.DebugService/*",
+				"*.HealthService/*",
+			},
+		},
+		{
+			name: "patterns with special characters",
+			patterns: []string{
+				".*PublicService/.*ness$",
+				".*PrivateService/.*$",
+				".*UsageService/.*$",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			qt := quicktest.New(t)
+			option := WithMethodTraceExcludePatterns(tt.patterns)
+			opts := &Options{}
+			option(opts)
+
+			qt.Assert(opts.MethodTraceExcludePatterns, quicktest.DeepEquals, tt.patterns)
+		})
+	}
+}
+
+func TestDefaultMethodTraceExcludePatterns(t *testing.T) {
+	qt := quicktest.New(t)
+	expected := []string{
+		".*PublicService/.*ness$",
+		".*PrivateService/.*$",
+		".*UsageService/.*$",
+	}
+	qt.Check(defaultMethodTraceExcludePatterns, quicktest.DeepEquals, expected)
+}
+
+func TestCreateFilterTraceDecider(t *testing.T) {
+	qt := quicktest.New(t)
+	customPatterns := []string{".*CustomService/.*"}
+	filter := createFilterTraceDecider(customPatterns)
+
+	// Should filter out default and custom patterns
+	type testCase struct {
+		method string
+		want   bool
+	}
+	cases := []testCase{
+		{"SomeService/SomeMethod", true},
+		{"PublicService/Liveness", false},
+		{"PrivateService/DoSomething", false},
+		{"UsageService/Track", false},
+		{"CustomService/Do", false},
+	}
+	for _, tc := range cases {
+		got := filter(&stats.RPCTagInfo{FullMethodName: tc.method})
+		qt.Check(got, quicktest.Equals, tc.want, quicktest.Commentf("method: %s", tc.method))
+	}
 }
 
 func TestNewGRPCOptionsAndCreds_DefaultOptions(t *testing.T) {
@@ -203,7 +304,20 @@ func TestNewGRPCOptionsAndCreds_WithCustomOptions(t *testing.T) {
 	serverOpts, err := NewServerOptionsAndCreds(
 		WithServiceName("test-service"),
 		WithServiceVersion("v1.0.0"),
-		WithMethodExcludePatterns([]string{"*.Health/*"}),
+		WithMethodLogExcludePatterns([]string{"*.Health/*"}),
+		WithSetOTELServerHandler(true),
+	)
+	qt.Check(err, quicktest.IsNil)
+	qt.Check(serverOpts, quicktest.Not(quicktest.IsNil))
+	qt.Check(len(serverOpts) > 0, quicktest.IsTrue)
+}
+
+func TestNewGRPCOptionsAndCreds_WithMethodTraceExcludePatterns(t *testing.T) {
+	qt := quicktest.New(t)
+	serverOpts, err := NewServerOptionsAndCreds(
+		WithServiceName("test-service"),
+		WithServiceVersion("v1.0.0"),
+		WithMethodTraceExcludePatterns([]string{"*.TestService/*", "*.DebugService/*"}),
 		WithSetOTELServerHandler(true),
 	)
 	qt.Check(err, quicktest.IsNil)
@@ -296,7 +410,7 @@ func TestNewGRPCOptionsAndCreds_OptionOrdering(t *testing.T) {
 func TestNewGRPCOptionsAndCreds_EmptyMethodPatterns(t *testing.T) {
 	qt := quicktest.New(t)
 	serverOpts, err := NewServerOptionsAndCreds(
-		WithMethodExcludePatterns([]string{}),
+		WithMethodLogExcludePatterns([]string{}),
 	)
 	qt.Check(err, quicktest.IsNil)
 	qt.Check(serverOpts, quicktest.Not(quicktest.IsNil))
@@ -306,7 +420,27 @@ func TestNewGRPCOptionsAndCreds_EmptyMethodPatterns(t *testing.T) {
 func TestNewGRPCOptionsAndCreds_NilMethodPatterns(t *testing.T) {
 	qt := quicktest.New(t)
 	serverOpts, err := NewServerOptionsAndCreds(
-		WithMethodExcludePatterns(nil),
+		WithMethodLogExcludePatterns(nil),
+	)
+	qt.Check(err, quicktest.IsNil)
+	qt.Check(serverOpts, quicktest.Not(quicktest.IsNil))
+	qt.Check(len(serverOpts) > 0, quicktest.IsTrue)
+}
+
+func TestNewGRPCOptionsAndCreds_EmptyTracePatterns(t *testing.T) {
+	qt := quicktest.New(t)
+	serverOpts, err := NewServerOptionsAndCreds(
+		WithMethodTraceExcludePatterns([]string{}),
+	)
+	qt.Check(err, quicktest.IsNil)
+	qt.Check(serverOpts, quicktest.Not(quicktest.IsNil))
+	qt.Check(len(serverOpts) > 0, quicktest.IsTrue)
+}
+
+func TestNewGRPCOptionsAndCreds_NilTracePatterns(t *testing.T) {
+	qt := quicktest.New(t)
+	serverOpts, err := NewServerOptionsAndCreds(
+		WithMethodTraceExcludePatterns(nil),
 	)
 	qt.Check(err, quicktest.IsNil)
 	qt.Check(serverOpts, quicktest.Not(quicktest.IsNil))
@@ -318,7 +452,8 @@ func TestNewGRPCOptionsAndCreds_MultipleOptions(t *testing.T) {
 	serverOpts, err := NewServerOptionsAndCreds(
 		WithServiceName("multi-service"),
 		WithServiceVersion("v2.1.0"),
-		WithMethodExcludePatterns([]string{"*.Health/*", "*.Metrics/*"}),
+		WithMethodLogExcludePatterns([]string{"*.Health/*", "*.Metrics/*"}),
+		WithMethodTraceExcludePatterns([]string{"*.TestService/*", "*.DebugService/*"}),
 		WithSetOTELServerHandler(true),
 		WithServiceConfig(client.HTTPSConfig{
 			Cert: "/path/to/cert.pem",
@@ -345,7 +480,21 @@ func BenchmarkNewGRPCOptionsAndCreds_WithOptions(b *testing.B) {
 		_, err := NewServerOptionsAndCreds(
 			WithServiceName("benchmark-service"),
 			WithServiceVersion("v1.0.0"),
-			WithMethodExcludePatterns([]string{"*.Health/*"}),
+			WithMethodLogExcludePatterns([]string{"*.Health/*"}),
+			WithSetOTELServerHandler(true),
+		)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkNewGRPCOptionsAndCreds_WithTracePatterns(b *testing.B) {
+	for b.Loop() {
+		_, err := NewServerOptionsAndCreds(
+			WithServiceName("benchmark-service"),
+			WithServiceVersion("v1.0.0"),
+			WithMethodTraceExcludePatterns([]string{"*.TestService/*", "*.DebugService/*"}),
 			WithSetOTELServerHandler(true),
 		)
 		if err != nil {
@@ -358,7 +507,8 @@ func BenchmarkNewGRPCOptions(b *testing.B) {
 	options := []Option{
 		WithServiceName("benchmark-service"),
 		WithServiceVersion("v1.0.0"),
-		WithMethodExcludePatterns([]string{"*.Health/*"}),
+		WithMethodLogExcludePatterns([]string{"*.Health/*"}),
+		WithMethodTraceExcludePatterns([]string{"*.TestService/*"}),
 		WithSetOTELServerHandler(true),
 	}
 
@@ -373,7 +523,7 @@ func TestNewGRPCOptionsAndCreds_ServerOptionsStructure(t *testing.T) {
 	serverOpts, err := NewServerOptionsAndCreds(
 		WithServiceName("test-service"),
 		WithServiceVersion("v1.0.0"),
-		WithMethodExcludePatterns([]string{"*.Health/*"}),
+		WithMethodLogExcludePatterns([]string{"*.Health/*"}),
 	)
 	qt.Check(err, quicktest.IsNil)
 
@@ -392,7 +542,7 @@ func TestNewGRPCOptionsAndCreds_InterceptorChain(t *testing.T) {
 	serverOpts, err := NewServerOptionsAndCreds(
 		WithServiceName("test-service"),
 		WithServiceVersion("v1.0.0"),
-		WithMethodExcludePatterns([]string{"*.Health/*"}),
+		WithMethodLogExcludePatterns([]string{"*.Health/*"}),
 	)
 	qt.Check(err, quicktest.IsNil)
 
@@ -423,8 +573,6 @@ J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8
 J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8
 J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8
 J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8
-J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8J8
-
 -----END CERTIFICATE-----`
 	keyContent := `-----BEGIN PRIVATE KEY-----
 MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQD...
