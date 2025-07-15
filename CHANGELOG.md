@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.9.0-alpha](https://github.com/instill-ai/x/compare/v0.8.0-alpha...v0.9.0-alpha) (2025-07-15)
+
+
+### Features
+
+* **grpcclient:** add Mgmt and Pipeline gRPC clients ([#51](https://github.com/instill-ai/x/issues/51)) ([d3b2816](https://github.com/instill-ai/x/commit/d3b28166753ab5f1858d43ef0912055a3bc49097))
+* **main:** add shared packages ([#53](https://github.com/instill-ai/x/issues/53)) ([035d7f8](https://github.com/instill-ai/x/commit/035d7f80b280af4d9c1482cf03c21ba8041617ed))
+* **temporal:** add context propagator ([#47](https://github.com/instill-ai/x/issues/47)) ([9172edd](https://github.com/instill-ai/x/commit/9172edd336bb29ce69be0be124658160b80f58e2))
+
+
+### Bug Fixes
+
+* **errors:** capture unique key violation constraint Postgres error ([#57](https://github.com/instill-ai/x/issues/57)) ([e330663](https://github.com/instill-ai/x/commit/e330663db2fcc5536a80cd58fc0bf13f90814185))
+* **errors:** correct unique key & capture GORM errors ([#58](https://github.com/instill-ai/x/issues/58)) ([b1675d0](https://github.com/instill-ai/x/commit/b1675d0e17954180f7be77a6a1dafc27e82d497f))
+* **server:** fix the decider interceptor logic and regex pattern ([#60](https://github.com/instill-ai/x/issues/60)) ([8a7d5d1](https://github.com/instill-ai/x/commit/8a7d5d1ae335f1f18c42cdbd30b3c195743d4a32))
+
+
+### Miscellaneous
+
+* **client:** improve client package ([#55](https://github.com/instill-ai/x/issues/55)) ([f2d7cce](https://github.com/instill-ai/x/commit/f2d7cce973ee7e3efae60839fb64884193994907))
+* **deps:** bump golang.org/x/net from 0.36.0 to 0.38.0 ([#46](https://github.com/instill-ai/x/issues/46)) ([5f87dc0](https://github.com/instill-ai/x/commit/5f87dc044a82d3e2dadd703f44affa012c2f34c1))
+* **errors:** improve errors package ([#56](https://github.com/instill-ai/x/issues/56)) ([3829fd8](https://github.com/instill-ai/x/commit/3829fd844cd5c4926e54f9da104c7d4a085bd182))
+* **main:** pass lint and remove unused pacakges and files ([#52](https://github.com/instill-ai/x/issues/52)) ([aa51f36](https://github.com/instill-ai/x/commit/aa51f36fb8cfde0ac8e1bef3a8d21634f69acae9))
+* **release-please:** update config.json ([#50](https://github.com/instill-ai/x/issues/50)) ([edf022a](https://github.com/instill-ai/x/commit/edf022aae3333f750ffe88f7fd27d1d46783ed5f))
+* **server:** improve server package ([#54](https://github.com/instill-ai/x/issues/54)) ([ad47957](https://github.com/instill-ai/x/commit/ad479570e6331d32a1b89548189ee2204b3ee559))
+
+
+### Refactor
+
+* **client,server:** improve gRPC server and client options ([#61](https://github.com/instill-ai/x/issues/61)) ([6376b6c](https://github.com/instill-ai/x/commit/6376b6cc6d5e4282b5d0f6466567c6fa3c9edf2c))
+* **minimock,quicktest:** unify testing framework ([#59](https://github.com/instill-ai/x/issues/59)) ([87222c2](https://github.com/instill-ai/x/commit/87222c286bdbb132a769f8fdbf2eaf83af0a6879))
+
 ## [0.8.0-alpha](https://github.com/instill-ai/x/compare/v0.7.0-alpha...v0.8.0-alpha) (2025-03-25)
 
 
