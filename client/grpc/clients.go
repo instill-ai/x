@@ -5,13 +5,10 @@ import (
 	"fmt"
 	"reflect"
 
-	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/instill-ai/x/client"
-	"github.com/instill-ai/x/client/grpc/interceptor"
 
 	artifactpb "github.com/instill-ai/protogen-go/artifact/artifact/v1alpha"
 	mgmtpb "github.com/instill-ai/protogen-go/core/mgmt/v1beta"
@@ -164,40 +161,4 @@ func newConn(host string, port int, https client.HTTPSConfig, setOTELClientHandl
 	}
 
 	return conn, nil
-}
-
-// NewClientOptionsAndCreds creates gRPC client dial options and credentials
-func NewClientOptionsAndCreds(options ...Option) ([]grpc.DialOption, error) {
-	opts := newOptions(options...)
-
-	var dialOpts []grpc.DialOption
-
-	// Add metadata propagator interceptor (handles both metadata and trace context)
-	dialOpts = append(dialOpts, grpc.WithUnaryInterceptor(interceptor.UnaryMetadataPropagatorInterceptor))
-	dialOpts = append(dialOpts, grpc.WithStreamInterceptor(interceptor.StreamMetadataPropagatorInterceptor))
-
-	dialOpts = append(dialOpts, grpc.WithDefaultCallOptions(
-		grpc.MaxCallRecvMsgSize(client.MaxPayloadSize),
-		grpc.MaxCallSendMsgSize(client.MaxPayloadSize),
-	))
-
-	// Add OTEL interceptor if enabled
-	if opts.SetOTELClientHandler {
-		dialOpts = append(dialOpts, grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
-	}
-
-	// Create TLS based credentials
-	var creds credentials.TransportCredentials
-	var err error
-	if opts.ServiceConfig.HTTPS.Cert != "" && opts.ServiceConfig.HTTPS.Key != "" {
-		creds, err = credentials.NewServerTLSFromFile(opts.ServiceConfig.HTTPS.Cert, opts.ServiceConfig.HTTPS.Key)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create TLS credentials: %w", err)
-		}
-		dialOpts = append(dialOpts, grpc.WithTransportCredentials(creds))
-	} else {
-		dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	}
-
-	return dialOpts, nil
 }

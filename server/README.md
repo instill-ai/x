@@ -10,8 +10,8 @@ The `x/server` package provides:
 
 1. **Pre-configured gRPC server options** - Ready-to-use server configuration with sensible defaults
 2. **Comprehensive interceptor chain** - Built-in logging, tracing, error handling, and recovery
-3. **Flexible logging control** - Configurable method exclusion patterns for selective logging
-4. **OpenTelemetry integration** - Automatic tracing and metrics collection
+3. **Flexible logging and tracing control** - Configurable method exclusion patterns for selective logging and tracing
+4. **OpenTelemetry integration** - Automatic tracing and metrics collection with custom filtering
 5. **gRPC-Gateway support** - HTTP/JSON gateway with custom error handling
 6. **TLS/SSL support** - Secure communication with certificate-based authentication
 7. **Comprehensive testing** - Unit tests with minimock for all components
@@ -26,17 +26,18 @@ The main entry point for creating gRPC server configurations with all necessary 
 
 Creates a complete gRPC server configuration with:
 
-- **Interceptor chain**: Metadata, decider, tracing, and recovery interceptors
+- **Interceptor chain**: Metadata, logging, tracing, and recovery interceptors
 - **TLS credentials**: Automatic certificate-based security
-- **OpenTelemetry integration**: Built-in tracing and metrics
+- **OpenTelemetry integration**: Built-in tracing and metrics with custom filtering
 - **Message size limits**: Configurable payload size limits
+- **Dual filtering**: Separate control for logging and tracing exclusions
 
 ```go
 // Basic usage
 opts, err := grpc.NewServerOptionsAndCreds(
     grpc.WithServiceName("my-service"),
     grpc.WithServiceVersion("v1.0.0"),
-    grpc.WithOTELCollectorEnable(true),
+    grpc.WithSetOTELServerHandler(true),
 )
 if err != nil {
     log.Fatal(err)
@@ -59,18 +60,91 @@ grpc.WithServiceName("my-service")
 grpc.WithServiceVersion("v1.0.0")
 
 // Observability
-grpc.WithOTELCollectorEnable(true)
+grpc.WithSetOTELServerHandler(true)
 
 // Logging control
-grpc.WithMethodExcludePatterns([]string{
-    "*.Health/*",
-    "*.Metrics/*",
+grpc.WithMethodLogExcludePatterns([]string{
+    ".*Health/.*",
+    ".*Metrics/.*",
+})
+
+// Tracing control
+grpc.WithMethodTraceExcludePatterns([]string{
+    ".*TestService/.*",
+    ".*DebugService/.*",
 })
 ```
 
-### 2.2 Interceptors
+### 2.2 Filter Deciders
 
-#### 2.2.1 Metadata Interceptor (`interceptor/metadata.go`)
+The server package now provides two types of filter deciders for fine-grained control over observability:
+
+#### 2.2.1 Log Filter Decider
+
+Controls which gRPC calls should be logged based on method patterns.
+
+**Default Log Exclusions:**
+
+```go
+var defaultMethodLogExcludePatterns = []string{
+    ".*PublicService/.*ness$",  // Health checks (liveness/readiness)
+    ".*PrivateService/.*$",     // Private service calls
+    ".*UsageService/.*$",       // Usage service calls
+}
+```
+
+**Usage:**
+
+```go
+// Custom log exclusion patterns
+opts, err := grpc.NewServerOptionsAndCreds(
+    grpc.WithServiceName("my-service"),
+    grpc.WithMethodLogExcludePatterns([]string{
+        ".*Health/.*",
+        ".*Metrics/.*",
+        ".*Internal/.*",
+    }),
+)
+```
+
+#### 2.2.2 Trace Filter Decider
+
+Controls which gRPC calls should be traced using OpenTelemetry.
+
+**Default Trace Exclusions:**
+
+```go
+var defaultMethodTraceExcludePatterns = []string{
+    ".*PublicService/.*ness$",  // Health checks (liveness/readiness)
+    ".*PrivateService/.*$",     // Private service calls
+    ".*UsageService/.*$",       // Usage service calls
+}
+```
+
+**Usage:**
+
+```go
+// Custom trace exclusion patterns
+opts, err := grpc.NewServerOptionsAndCreds(
+    grpc.WithServiceName("my-service"),
+    grpc.WithSetOTELServerHandler(true),
+    grpc.WithMethodTraceExcludePatterns([]string{
+        ".*TestService/.*",
+        ".*DebugService/.*",
+        ".*HealthService/.*",
+    }),
+)
+```
+
+**Important:** Method exclusion patterns use Go regex syntax. Use `.*` to match any characters (not `*`). For example:
+
+- `".*PublicService/.*ness$"` - matches any service ending with "PublicService" and methods ending with "ness"
+- `".*Health/.*"` - matches any service containing "Health" and any method
+- `".*Internal/.*"` - matches any service containing "Internal" and any method
+
+### 2.3 Interceptors
+
+#### 2.3.1 Metadata Interceptor (`interceptor/metadata.go`)
 
 Handles gRPC metadata preservation and error conversion for both unary and streaming RPCs.
 
@@ -99,67 +173,7 @@ Handles gRPC metadata preservation and error conversion for both unary and strea
 // No manual configuration required
 ```
 
-#### 2.2.2 Decider Interceptor (`interceptor/decider.go`)
-
-Controls which gRPC calls should be logged based on method patterns.
-
-**Default Exclusions:**
-
-```go
-var DefaultMethodExcludePatterns = []string{
-    ".*PublicService/.*ness$",  // Health checks (liveness/readiness)
-    ".*PrivateService/.*$",     // Private service calls
-}
-```
-
-**Usage:**
-
-```go
-// Custom exclusion patterns
-patterns := []string{
-    ".*Health/.*",
-    ".*Metrics/.*",
-    ".*Internal/.*",
-}
-
-interceptor := interceptor.DeciderUnaryServerInterceptor(patterns)
-```
-
-**Important:** Method exclusion patterns use Go regex syntax. Use `.*` to match any characters (not `*`). For example:
-
-- `".*PublicService/.*ness$"` - matches any service ending with "PublicService" and methods ending with "ness"
-- `".*Health/.*"` - matches any service containing "Health" and any method
-- `".*Internal/.*"` - matches any service containing "Internal" and any method
-
-#### 2.2.3 Tracing Interceptor (`interceptor/trace.go`)
-
-Provides comprehensive request logging with trace context and OpenTelemetry integration.
-
-**Features:**
-
-- **Structured logging**: JSON-formatted logs with trace IDs
-- **Performance metrics**: Request duration tracking
-- **Error categorization**: Automatic log level selection based on gRPC codes
-- **OpenTelemetry support**: Dual logging to both Zap and OTEL
-
-**Log Levels by gRPC Code:**
-
-- `codes.OK` → Info
-- `codes.Canceled`, `codes.DeadlineExceeded`, etc. → Warn
-- `codes.InvalidArgument`, `codes.NotFound`, etc. → Error
-
-**Example Log Output:**
-
-```json
-{
-  "level": "info",
-  "msg": "finished unary call CreateUser (trace_id: 1234567890abcdef)",
-  "timestamp": "2024-01-01T12:00:00Z",
-  "duration": "15.2ms"
-}
-```
-
-#### 2.2.4 Recovery Interceptor (`interceptor/recovery.go`)
+#### 2.3.2 Recovery Interceptor (`interceptor/recovery.go`)
 
 Handles panics and converts them to gRPC errors.
 
@@ -169,7 +183,7 @@ Handles panics and converts them to gRPC errors.
 // Prevents server crashes from unhandled panics
 ```
 
-### 2.3 gRPC-Gateway Support (`gateway/misc.go`)
+### 2.4 gRPC-Gateway Support (`gateway/misc.go`)
 
 Provides HTTP/JSON gateway functionality with custom error handling and response modification.
 
@@ -214,38 +228,6 @@ Creates gRPC server options.
 - `[]grpc.ServerOption`: Server options for `grpc.NewServer()`
 - `error`: Any configuration errors
 
-#### `interceptor.DeciderUnaryServerInterceptor(patterns []string) grpc.UnaryServerInterceptor`
-
-Creates a unary interceptor that controls logging based on method patterns.
-
-**Parameters:**
-
-- `patterns`: Regex patterns for methods to exclude from logging. When a method matches any pattern, it will NOT be logged (unless there's an error).
-
-**Behavior:**
-
-- Returns `false` (don't log) when method matches any exclude pattern and no error occurs
-- Returns `true` (do log) when method doesn't match any pattern or when an error occurs
-- Always logs requests that result in errors, regardless of patterns
-
-#### `interceptor.TracingUnaryServerInterceptor(serviceName, serviceVersion string, otelEnable bool) grpc.UnaryServerInterceptor`
-
-Creates a unary interceptor for request tracing and logging.
-
-**Parameters:**
-
-- `serviceName`: Service identifier for logs
-- `serviceVersion`: Service version for logs
-- `otelEnable`: Enable OpenTelemetry logging
-
-#### `gateway.HTTPResponseModifier(ctx context.Context, w http.ResponseWriter, p proto.Message) error`
-
-Modifies HTTP responses based on gRPC metadata.
-
-#### `gateway.ErrorHandler(ctx context.Context, mux *runtime.ServeMux, marshaler runtime.Marshaler, w http.ResponseWriter, r *http.Request, err error)`
-
-Handles gRPC errors in HTTP responses.
-
 ### 3.2 Configuration Options
 
 #### `grpc.WithServiceConfig(config client.HTTPSConfig)`
@@ -267,13 +249,17 @@ Sets the service name for logging and tracing.
 
 Sets the service version for logging and tracing.
 
-#### `grpc.WithOTELCollectorEnable(enable bool)`
+#### `grpc.WithSetOTELServerHandler(enable bool)`
 
 Enables or disables OpenTelemetry collector integration.
 
-#### `grpc.WithMethodExcludePatterns(patterns []string)`
+#### `grpc.WithMethodLogExcludePatterns(patterns []string)`
 
 Sets custom method exclusion patterns for logging.
+
+#### `grpc.WithMethodTraceExcludePatterns(patterns []string)`
+
+Sets custom method exclusion patterns for tracing.
 
 ## 4. Usage Examples
 
@@ -295,7 +281,7 @@ func main() {
     opts, err := grpc.NewServerOptionsAndCreds(
         grpc.WithServiceName("user-service"),
         grpc.WithServiceVersion("v1.0.0"),
-        grpc.WithOTELCollectorEnable(true),
+        grpc.WithSetOTELServerHandler(true),
     )
     if err != nil {
         log.Fatal(err)
@@ -331,7 +317,7 @@ opts, err := grpc.NewServerOptionsAndCreds(
         Cert: "/path/to/server.crt",
         Key:  "/path/to/server.key",
     }),
-    grpc.WithOTELCollectorEnable(true),
+    grpc.WithSetOTELServerHandler(true),
 )
 if err != nil {
     log.Fatal(err)
@@ -341,17 +327,23 @@ if err != nil {
 log.Printf("TLS enabled: %v", opts != nil)
 ```
 
-### 4.3 Custom Logging Patterns
+### 4.3 Custom Logging and Tracing Patterns
 
 ```go
-// Exclude health checks and metrics from logging
+// Exclude health checks and metrics from logging and tracing
 opts, err := grpc.NewServerOptionsAndCreds(
     grpc.WithServiceName("api-service"),
-    grpc.WithMethodExcludePatterns([]string{
+    grpc.WithSetOTELServerHandler(true),
+    grpc.WithMethodLogExcludePatterns([]string{
         ".*Health/.*",
         ".*Metrics/.*",
         ".*Internal/.*",
         ".*Debug/.*",
+    }),
+    grpc.WithMethodTraceExcludePatterns([]string{
+        ".*TestService/.*",
+        ".*DebugService/.*",
+        ".*HealthService/.*",
     }),
 )
 ```
@@ -405,32 +397,6 @@ func main() {
 }
 ```
 
-### 4.5 Custom Interceptor Chain
-
-```go
-// Create custom interceptor chain
-unaryInterceptors := grpcmiddleware.ChainUnaryServer(
-    interceptor.UnaryAppendMetadataInterceptor,
-    interceptor.DeciderUnaryServerInterceptor([]string{".*Health/.*"}),
-    interceptor.TracingUnaryServerInterceptor("my-service", "v1.0.0", true),
-    grpcrecovery.UnaryServerInterceptor(interceptor.RecoveryInterceptorOpt()),
-    // Add your custom interceptors here
-)
-
-streamInterceptors := grpcmiddleware.ChainStreamServer(
-    interceptor.StreamAppendMetadataInterceptor,
-    interceptor.DeciderStreamServerInterceptor([]string{".*Health/.*"}),
-    interceptor.TracingStreamServerInterceptor("my-service", "v1.0.0", true),
-    grpcrecovery.StreamServerInterceptor(interceptor.RecoveryInterceptorOpt()),
-    // Add your custom interceptors here
-)
-
-server := grpc.NewServer(
-    grpc.UnaryInterceptor(unaryInterceptors),
-    grpc.StreamInterceptor(streamInterceptors),
-)
-```
-
 ## 5. Testing
 
 The server package includes comprehensive unit tests using **minimock** for all components.
@@ -446,23 +412,6 @@ Generates mocks for: `Logger`, `OTELLogger`, `ServerStream`, `Marshaler`, `Decod
 ### 5.2 Unit Testing Examples
 
 ```go
-func TestTracingInterceptor_WithMocks(t *testing.T) {
-    qt := quicktest.New(t)
-    mc := minimock.NewController(t)
-
-    mockLogger := mockserver.NewLoggerMock(mc)
-    mockOTELLogger := mockserver.NewOTELLoggerMock(mc)
-
-    // Set up mock expectations
-    mockLogger.InfoMock.Expect("finished unary call", minimock.Any).Return()
-    mockOTELLogger.EmitMock.Expect(minimock.Any, minimock.Any).Return()
-
-    // Test interceptor behavior
-    interceptor := interceptor.TracingUnaryServerInterceptor("test-service", "v1.0.0", true)
-
-    // ... test implementation
-}
-
 func TestMetadataInterceptor_WithMocks(t *testing.T) {
     qt := quicktest.New(t)
     mc := minimock.NewController(t)
@@ -500,24 +449,31 @@ func TestMetadataInterceptor_WithMocks(t *testing.T) {
 opts, err := grpc.NewServerOptionsAndCreds(
     grpc.WithServiceName("user-management-service"),
     grpc.WithServiceVersion("v2.1.0"),
-    grpc.WithOTELCollectorEnable(true),
+    grpc.WithSetOTELServerHandler(true),
 )
 ```
 
-### 6.2 Logging Strategy
+### 6.2 Logging and Tracing Strategy
 
 - **Exclude noisy endpoints**: Health checks, metrics, and internal calls
 - **Use consistent patterns**: Standardize method exclusion patterns across services
 - **Monitor log volume**: Adjust patterns based on actual usage
+- **Separate logging and tracing**: Use different patterns for logging vs tracing
 
 ```go
 // Recommended exclusion patterns
-patterns := []string{
+logPatterns := []string{
     ".*Health/.*",           // Health checks
     ".*Metrics/.*",          // Metrics endpoints
     ".*Internal/.*",         // Internal service calls
     ".*Debug/.*",            // Debug endpoints
     ".*PublicService/.*ness$", // Liveness/readiness checks
+}
+
+tracePatterns := []string{
+    ".*TestService/.*",      // Test services
+    ".*DebugService/.*",     // Debug services
+    ".*HealthService/.*",    // Health services
 }
 ```
 
@@ -567,13 +523,22 @@ opts, err := grpc.NewServerOptionsAndCreds(
 - **Enable OpenTelemetry**: For comprehensive tracing and metrics
 - **Monitor request patterns**: Use the built-in request logging
 - **Track performance**: Leverage the automatic duration tracking
+- **Use dual filtering**: Configure both logging and tracing exclusions
 
 ```go
-// Enable full observability
+// Enable full observability with custom filtering
 opts, err := grpc.NewServerOptionsAndCreds(
-    grpc.WithOTELCollectorEnable(true),
+    grpc.WithSetOTELServerHandler(true),
     grpc.WithServiceName("my-service"),
     grpc.WithServiceVersion("v1.0.0"),
+    grpc.WithMethodLogExcludePatterns([]string{
+        ".*Health/.*",
+        ".*Metrics/.*",
+    }),
+    grpc.WithMethodTraceExcludePatterns([]string{
+        ".*TestService/.*",
+        ".*DebugService/.*",
+    }),
 )
 ```
 
@@ -596,7 +561,7 @@ server := grpc.NewServer()
 opts, err := grpc.NewServerOptionsAndCreds(
     grpc.WithServiceName("my-service"),
     grpc.WithServiceVersion("v1.0.0"),
-    grpc.WithOTELCollectorEnable(true),
+    grpc.WithSetOTELServerHandler(true),
 )
 if err != nil {
     log.Fatal(err)
@@ -627,9 +592,10 @@ server := grpc.NewServer(grpc.UnaryInterceptor(unaryInterceptors...))
 ## 8. Performance Considerations
 
 - **Minimal overhead**: Interceptors are optimized for performance
-- **Selective logging**: Use exclusion patterns to reduce log volume
+- **Selective logging and tracing**: Use exclusion patterns to reduce observability overhead
 - **Efficient error handling**: Error conversion is optimized for common cases
 - **Memory efficient**: Context propagation is designed for minimal allocations
+- **Dual filtering**: Separate control for logging and tracing reduces unnecessary processing
 
 ## 9. Troubleshooting
 
@@ -639,6 +605,7 @@ server := grpc.NewServer(grpc.UnaryInterceptor(unaryInterceptors...))
 2. **Log volume too high**: Adjust method exclusion patterns
 3. **OpenTelemetry not working**: Verify OTEL collector is running and accessible
 4. **gRPC-Gateway errors**: Check header matcher configuration
+5. **Tracing overhead**: Use trace exclusion patterns to reduce tracing costs
 
 ### 9.2 Debug Mode
 
@@ -651,7 +618,7 @@ log.SetLevel(zap.DebugLevel)
 // Check interceptor chain
 opts, err := grpc.NewServerOptionsAndCreds(
     grpc.WithServiceName("debug-service"),
-    grpc.WithOTELCollectorEnable(false), // Disable OTEL for debugging
+    grpc.WithSetOTELServerHandler(false), // Disable OTEL for debugging
 )
 ```
 
