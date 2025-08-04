@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0-alpha](https://github.com/instill-ai/x/compare/v0.9.0-alpha...v0.10.0-alpha) (2025-08-04)
+
+
+### Features
+
+* **temporal:** add support for connecting to Temporal Cloud using API key ([#62](https://github.com/instill-ai/x/issues/62)) ([85de2fb](https://github.com/instill-ai/x/commit/85de2fb234ccbd5ef8e1b797caaed105303f0642))
+
 ## [0.9.0-alpha](https://github.com/instill-ai/x/compare/v0.8.0-alpha...v0.9.0-alpha) (2025-07-15)
 
 
