@@ -1,6 +1,7 @@
 package temporal
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -27,7 +28,14 @@ type ClientConfig struct {
 
 	MetricsPort int `koanf:"metricsport"` // Listener address for the Temporal metrics to be scraped
 
+	// Temporal Cloud specific config.
+	UseTemporalCloud bool   `koanf:"usetemporalcloud"` // Use Temporal Cloud
+	APIKey           string `koanf:"apikey"`           // API key to use for authentication
+
 	// Secure communication config.
+	// DEPRECATED: These configurations are deprecated in favor of using the API key
+	// for authentication. They are maintained for backward compatibility and will
+	// be removed in a future version.
 	ServerName   string `koanf:"servername"`   // Server name to use for verifying the server certificate and as metrics prefix
 	ServerRootCA string `koanf:"serverrootca"` // Path to the server root CA certificate
 	ClientCert   string `koanf:"clientcert"`   // Path to the client certificate
@@ -50,6 +58,13 @@ func ClientOptions(cfg ClientConfig, log *zap.Logger) (client.Options, error) {
 		Namespace:          cfg.Namespace,
 		Logger:             logx.NewZapAdapter(log),
 		ContextPropagators: []workflow.ContextPropagator{NewContextPropagator()},
+	}
+	if cfg.UseTemporalCloud {
+		opts.ConnectionOptions.TLS = &tls.Config{}
+		opts.Credentials = client.NewAPIKeyDynamicCredentials(func(ctx context.Context) (string, error) {
+			// TODO: use dynamic api key here in case we want to rotate the api key in the future
+			return cfg.APIKey, nil
+		})
 	}
 
 	if cfg.ServerRootCA != "" && cfg.ClientCert != "" && cfg.ClientKey != "" {
