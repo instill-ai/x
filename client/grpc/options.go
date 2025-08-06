@@ -70,6 +70,7 @@ type Options struct {
 	ServiceConfig              client.ServiceConfig
 	SetOTELClientHandler       bool
 	MethodTraceExcludePatterns []string
+	GRPCOptions                []grpc.DialOption
 }
 
 // Option is a function that modifies Options
@@ -96,11 +97,19 @@ func WithMethodTraceExcludePatterns(patterns []string) Option {
 	}
 }
 
+// WithGRPCOptions sets the gRPC options
+func WithGRPCOptions(options ...grpc.DialOption) Option {
+	return func(opts *Options) {
+		opts.GRPCOptions = options
+	}
+}
+
 // newOptions creates a new Options with default values and applies the given options
 func newOptions(options ...Option) *Options {
 	opts := &Options{
 		SetOTELClientHandler:       false,
 		MethodTraceExcludePatterns: []string{},
+		GRPCOptions:                []grpc.DialOption{},
 	}
 
 	for _, option := range options {
@@ -136,6 +145,8 @@ func NewClientOptionsAndCreds(options ...Option) ([]grpc.DialOption, error) {
 			),
 		))
 	}
+
+	dialOpts = append(dialOpts, opts.GRPCOptions...)
 
 	// Create TLS based credentials
 	var creds credentials.TransportCredentials
