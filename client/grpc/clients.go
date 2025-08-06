@@ -101,7 +101,7 @@ func NewUnregisteredClient[T any](
 	}
 
 	// Create connection
-	conn, err := newConn(opts.ServiceConfig.Host, port, opts.ServiceConfig.HTTPS, opts.SetOTELClientHandler)
+	conn, err := newConn(opts.ServiceConfig.Host, port, opts.ServiceConfig.HTTPS, opts.SetOTELClientHandler, opts.GRPCOptions)
 	if err != nil {
 		return zero, nil, err
 	}
@@ -149,7 +149,7 @@ func NewClient[T any](options ...Option) (T, func() error, error) {
 	return NewUnregisteredClient[T](typeName, info.creator, info.isPublic, options...)
 }
 
-func newConn(host string, port int, https client.HTTPSConfig, setOTELClientHandler bool) (conn *grpc.ClientConn, err error) {
+func newConn(host string, port int, https client.HTTPSConfig, setOTELClientHandler bool, grpcOptions []grpc.DialOption) (conn *grpc.ClientConn, err error) {
 	dialOpts, err := NewClientOptionsAndCreds(
 		WithSetOTELClientHandler(setOTELClientHandler),
 	)
@@ -169,6 +169,10 @@ func newConn(host string, port int, https client.HTTPSConfig, setOTELClientHandl
 	if host == "usage.instill-ai.com" {
 		tlsConfig := &tls.Config{}
 		dialOpts = append(dialOpts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
+	}
+
+	if len(grpcOptions) > 0 {
+		dialOpts = append(dialOpts, grpcOptions...)
 	}
 
 	conn, err = grpc.NewClient(fmt.Sprintf("%s:%d", host, port), dialOpts...)
