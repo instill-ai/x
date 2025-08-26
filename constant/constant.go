@@ -17,6 +17,10 @@ const (
 	// accepted values are the string values of
 	// github.com/instill-ai/protogen-go/common/run/v1alpha.RunSource.
 	HeaderUserAgentKey = "Instill-User-Agent"
+	// HeaderServiceKey is the context key for service identity.
+	HeaderServiceKey = "Instill-Service"
+	// HeaderInstillCodeKey is the context key for shareable link codes.
+	HeaderInstillCodeKey = "Instill-Code"
 	// ContentTypeJSON is the value for the JSON content type.
 	ContentTypeJSON = "application/json"
 )

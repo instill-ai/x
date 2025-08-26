@@ -13,6 +13,7 @@ require (
 	github.com/instill-ai/protogen-go v0.3.3-alpha.0.20250612083230-80e6987e5d61
 	github.com/jackc/pgconn v1.14.3
 	github.com/minio/minio-go/v7 v7.0.92
+	github.com/openfga/go-sdk v0.7.1
 	github.com/prometheus/client_golang v1.22.0
 	github.com/stretchr/testify v1.10.0
 	github.com/uber-go/tally/v4 v4.1.17
@@ -80,6 +81,7 @@ require (
 	github.com/robfig/cron v1.2.0 // indirect
 	github.com/rogpeppe/go-internal v1.13.1 // indirect
 	github.com/rs/xid v1.6.0 // indirect
+	github.com/sourcegraph/conc v0.3.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/tinylib/msgp v1.3.0 // indirect
 	github.com/twmb/murmur3 v1.1.8 // indirect
