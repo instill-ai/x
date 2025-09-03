@@ -75,14 +75,56 @@ func newClientOptions(options ...Option) (*Options, error) {
 	return opts, nil
 }
 
-// NewClient creates a gRPC client of the specified service type with proper type safety
-func NewClient[T any](options ...Option) (T, func() error, error) {
+// NewUnregisteredClient creates a gRPC client of the specified service type
+// with proper type safety. This method can create a gRPC client that isn't
+// registered in the clientRegistry map by taking a client connection creator
+// and a server visibility flag.
+func NewUnregisteredClient[T any](
+	typeName string,
+	creator func(*grpc.ClientConn) any,
+	isPublic bool,
+	options ...Option,
+) (T, func() error, error) {
 	var zero T // zero value for type T
 
 	opts, err := newClientOptions(options...)
 	if err != nil {
 		return zero, nil, err
 	}
+
+	// Determine port based on whether it's public or private
+	var port int
+	if isPublic {
+		port = opts.ServiceConfig.PublicPort
+	} else {
+		port = opts.ServiceConfig.PrivatePort
+	}
+
+	// Create connection
+	conn, err := newConn(opts.ServiceConfig.Host, port, opts.ServiceConfig.HTTPS, opts.SetOTELClientHandler)
+	if err != nil {
+		return zero, nil, err
+	}
+
+	// Create client
+	client := creator(conn)
+
+	// Type assertion with safety check
+	typedClient, ok := client.(T)
+	if !ok {
+		if closeErr := conn.Close(); closeErr != nil {
+			return zero, nil, fmt.Errorf("failed to close connection: %w, original error: type assertion failed for client type: %s", closeErr, typeName)
+		}
+		return zero, nil, fmt.Errorf("type assertion failed for client type: %s", typeName)
+	}
+
+	return typedClient, conn.Close, nil
+}
+
+// NewClient creates a gRPC client of the specified service type with proper
+// type safety.
+func NewClient[T any](options ...Option) (T, func() error, error) {
+	var zero T // zero value for type T
 
 	// Get client type name using reflection
 	clientType := reflect.TypeOf(zero)
@@ -104,33 +146,7 @@ func NewClient[T any](options ...Option) (T, func() error, error) {
 		return zero, nil, fmt.Errorf("unsupported client type: %s", typeName)
 	}
 
-	// Determine port based on whether it's public or private
-	var port int
-	if info.isPublic {
-		port = opts.ServiceConfig.PublicPort
-	} else {
-		port = opts.ServiceConfig.PrivatePort
-	}
-
-	// Create connection
-	conn, err := newConn(opts.ServiceConfig.Host, port, opts.ServiceConfig.HTTPS, opts.SetOTELClientHandler)
-	if err != nil {
-		return zero, nil, err
-	}
-
-	// Create client
-	client := info.creator(conn)
-
-	// Type assertion with safety check
-	typedClient, ok := client.(T)
-	if !ok {
-		if closeErr := conn.Close(); closeErr != nil {
-			return zero, nil, fmt.Errorf("failed to close connection: %w, original error: type assertion failed for client type: %s", closeErr, typeName)
-		}
-		return zero, nil, fmt.Errorf("type assertion failed for client type: %s", typeName)
-	}
-
-	return typedClient, conn.Close, nil
+	return NewUnregisteredClient[T](typeName, info.creator, info.isPublic, options...)
 }
 
 func newConn(host string, port int, https client.HTTPSConfig, setOTELClientHandler bool) (conn *grpc.ClientConn, err error) {
