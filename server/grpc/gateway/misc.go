@@ -195,3 +195,14 @@ func InjectOwnerToContext(ctx context.Context, owner *mgmtpb.User) context.Conte
 	ctx = metadata.AppendToOutgoingContext(ctx, constant.HeaderUserUIDKey, owner.GetUid())
 	return ctx
 }
+
+// InjectServiceMetadata injects the service identification metadata to the context.
+// This is used by backend services to identify themselves when making requests to
+// other services (e.g., agent-backend calling mgmt-backend). The metadata will be
+// automatically propagated by the UnaryMetadataPropagatorInterceptor.
+//
+// headerKey should be the metadata key (e.g., "Instill-Backend")
+// serviceName should be the service identifier (e.g., "agent-backend", "artifact-backend")
+func InjectServiceMetadata(ctx context.Context, headerKey, serviceName string) context.Context {
+	return metadata.AppendToOutgoingContext(ctx, headerKey, serviceName)
+}
