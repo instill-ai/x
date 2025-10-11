@@ -170,8 +170,12 @@ type Options struct {
 	ServiceVersion             string
 	HTTPSConfig                client.HTTPSConfig
 	MethodLogExcludePatterns   []string
-	MethodTraceExcludePatterns []string // New field
+	MethodTraceExcludePatterns []string
 	SetOTELServerHandler       bool
+	// ServiceMetadata allows injecting metadata into all incoming contexts
+	// This is useful for services that need to identify themselves when making
+	// requests to other services (e.g., "Instill-Backend": "agent-backend")
+	ServiceMetadata map[string]string
 }
 
 // Option is a function that modifies Options
@@ -219,6 +223,15 @@ func WithMethodTraceExcludePatterns(patterns []string) Option {
 	}
 }
 
+// WithServiceMetadata sets metadata to be injected into all incoming contexts.
+// This is useful for services that need to identify themselves when making
+// requests to other services (e.g., map["Instill-Backend"] = "agent-backend")
+func WithServiceMetadata(metadata map[string]string) Option {
+	return func(o *Options) {
+		o.ServiceMetadata = metadata
+	}
+}
+
 // newOptions creates a new Options with default values and applies the given options
 func newOptions(options ...Option) *Options {
 	opts := &Options{
@@ -228,6 +241,7 @@ func newOptions(options ...Option) *Options {
 		MethodLogExcludePatterns:   []string{},
 		MethodTraceExcludePatterns: []string{},
 		SetOTELServerHandler:       false,
+		ServiceMetadata:            nil,
 	}
 
 	for _, option := range options {
@@ -264,17 +278,33 @@ func NewServerOptionsAndCreds(options ...Option) ([]grpc.ServerOption, error) {
 		unaryInterceptorOpts = append(unaryInterceptorOpts, grpczap.WithMessageProducer(messageProducer))
 	}
 
+	// Build interceptor chains with optional service metadata injection
+	var unaryChain []grpc.UnaryServerInterceptor
+	var streamChain []grpc.StreamServerInterceptor
+
+	// Add service metadata injectors if configured
+	if len(opts.ServiceMetadata) > 0 {
+		for headerKey, value := range opts.ServiceMetadata {
+			unaryChain = append(unaryChain, interceptor.NewUnaryInjectMetadataInterceptor(headerKey, value))
+			streamChain = append(streamChain, interceptor.NewStreamInjectMetadataInterceptor(headerKey, value))
+		}
+	}
+
+	// Add standard interceptors
+	unaryChain = append(unaryChain,
+		grpczap.UnaryServerInterceptor(logger, unaryInterceptorOpts...),
+		interceptor.UnaryAppendMetadataInterceptor,
+		grpcrecovery.UnaryServerInterceptor(interceptor.RecoveryInterceptorOpt()),
+	)
+	streamChain = append(streamChain,
+		grpczap.StreamServerInterceptor(logger, streamInterceptorOpts...),
+		interceptor.StreamAppendMetadataInterceptor,
+		grpcrecovery.StreamServerInterceptor(interceptor.RecoveryInterceptorOpt()),
+	)
+
 	grpcServerOpts = append(grpcServerOpts, []grpc.ServerOption{
-		grpc.StreamInterceptor(grpcmiddleware.ChainStreamServer(
-			grpczap.StreamServerInterceptor(logger, streamInterceptorOpts...),
-			interceptor.StreamAppendMetadataInterceptor,
-			grpcrecovery.StreamServerInterceptor(interceptor.RecoveryInterceptorOpt()),
-		)),
-		grpc.UnaryInterceptor(grpcmiddleware.ChainUnaryServer(
-			grpczap.UnaryServerInterceptor(logger, unaryInterceptorOpts...),
-			interceptor.UnaryAppendMetadataInterceptor,
-			grpcrecovery.UnaryServerInterceptor(interceptor.RecoveryInterceptorOpt()),
-		)),
+		grpc.StreamInterceptor(grpcmiddleware.ChainStreamServer(streamChain...)),
+		grpc.UnaryInterceptor(grpcmiddleware.ChainUnaryServer(unaryChain...)),
 		grpc.MaxRecvMsgSize(client.MaxPayloadSize),
 		grpc.MaxSendMsgSize(client.MaxPayloadSize),
 	}...)
