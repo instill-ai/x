@@ -70,6 +70,8 @@ type Options struct {
 	ServiceConfig              client.ServiceConfig
 	SetOTELClientHandler       bool
 	MethodTraceExcludePatterns []string
+	ServiceIdentificationKey   string
+	ServiceIdentificationValue string
 }
 
 // Option is a function that modifies Options
@@ -96,6 +98,14 @@ func WithMethodTraceExcludePatterns(patterns []string) Option {
 	}
 }
 
+// WithServiceIdentification adds service identification metadata to all outgoing gRPC calls.
+func WithServiceIdentification(headerKey, serviceName string) Option {
+	return func(opts *Options) {
+		opts.ServiceIdentificationKey = headerKey
+		opts.ServiceIdentificationValue = serviceName
+	}
+}
+
 // newOptions creates a new Options with default values and applies the given options
 func newOptions(options ...Option) *Options {
 	opts := &Options{
@@ -118,9 +128,29 @@ func NewClientOptionsAndCreds(options ...Option) ([]grpc.DialOption, error) {
 
 	var dialOpts []grpc.DialOption
 
-	// Add metadata propagator interceptor (handles both metadata and trace context)
-	dialOpts = append(dialOpts, grpc.WithUnaryInterceptor(interceptor.UnaryMetadataPropagatorInterceptor))
-	dialOpts = append(dialOpts, grpc.WithStreamInterceptor(interceptor.StreamMetadataPropagatorInterceptor))
+	// Build interceptor chain: Propagator first, then service identification
+	var unaryChain []grpc.UnaryClientInterceptor
+	var streamChain []grpc.StreamClientInterceptor
+
+	// Add metadata propagator interceptor first
+	unaryChain = append(unaryChain, interceptor.UnaryMetadataPropagatorInterceptor)
+	streamChain = append(streamChain, interceptor.StreamMetadataPropagatorInterceptor)
+
+	// Add service identification interceptor if configured
+	if opts.ServiceIdentificationKey != "" && opts.ServiceIdentificationValue != "" {
+		unaryChain = append(unaryChain, interceptor.NewUnaryMetadataServiceIdentificationInterceptor(
+			opts.ServiceIdentificationKey,
+			opts.ServiceIdentificationValue,
+		))
+		streamChain = append(streamChain, interceptor.NewStreamMetadataServiceIdentificationInterceptor(
+			opts.ServiceIdentificationKey,
+			opts.ServiceIdentificationValue,
+		))
+	}
+
+	// Register all interceptors in a single chain
+	dialOpts = append(dialOpts, grpc.WithChainUnaryInterceptor(unaryChain...))
+	dialOpts = append(dialOpts, grpc.WithChainStreamInterceptor(streamChain...))
 
 	dialOpts = append(dialOpts, grpc.WithDefaultCallOptions(
 		grpc.MaxCallRecvMsgSize(client.MaxPayloadSize),

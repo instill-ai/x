@@ -8,8 +8,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	"github.com/instill-ai/x/client"
-
 	artifactpb "github.com/instill-ai/protogen-go/artifact/artifact/v1alpha"
 	mgmtpb "github.com/instill-ai/protogen-go/core/mgmt/v1beta"
 	usagepb "github.com/instill-ai/protogen-go/core/usage/v1beta"
@@ -100,8 +98,8 @@ func NewUnregisteredClient[T any](
 		port = opts.ServiceConfig.PrivatePort
 	}
 
-	// Create connection
-	conn, err := newConn(opts.ServiceConfig.Host, port, opts.ServiceConfig.HTTPS, opts.SetOTELClientHandler)
+	// Create connection using the full options
+	conn, err := newConn(opts.ServiceConfig.Host, port, opts)
 	if err != nil {
 		return zero, nil, err
 	}
@@ -149,17 +147,21 @@ func NewClient[T any](options ...Option) (T, func() error, error) {
 	return NewUnregisteredClient[T](typeName, info.creator, info.isPublic, options...)
 }
 
-func newConn(host string, port int, https client.HTTPSConfig, setOTELClientHandler bool) (conn *grpc.ClientConn, err error) {
+func newConn(host string, port int, opts *Options) (conn *grpc.ClientConn, err error) {
+	// Build dial options using the provided options
 	dialOpts, err := NewClientOptionsAndCreds(
-		WithSetOTELClientHandler(setOTELClientHandler),
+		WithServiceConfig(opts.ServiceConfig),
+		WithSetOTELClientHandler(opts.SetOTELClientHandler),
+		WithMethodTraceExcludePatterns(opts.MethodTraceExcludePatterns),
+		WithServiceIdentification(opts.ServiceIdentificationKey, opts.ServiceIdentificationValue),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("creating dial options: %w", err)
 	}
 
 	// Add TLS credentials if HTTPS config is provided
-	if https.Cert != "" && https.Key != "" {
-		creds, err := credentials.NewServerTLSFromFile(https.Cert, https.Key)
+	if opts.ServiceConfig.HTTPS.Cert != "" && opts.ServiceConfig.HTTPS.Key != "" {
+		creds, err := credentials.NewServerTLSFromFile(opts.ServiceConfig.HTTPS.Cert, opts.ServiceConfig.HTTPS.Key)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create TLS credentials: %w", err)
 		}
