@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1-alpha](https://github.com/instill-ai/x/compare/v0.10.0-alpha...v0.10.1-alpha) (2025-10-12)
+
+
+### Bug Fixes
+
+* **client/grpc:** add metadata filtering and service identification ([#67](https://github.com/instill-ai/x/issues/67)) ([baf5c6d](https://github.com/instill-ai/x/commit/baf5c6d0bfbd53eaef9af392ef3ac2f9bc5ee939))
+
 ## [0.10.0-alpha](https://github.com/instill-ai/x/compare/v0.9.0-alpha...v0.10.0-alpha) (2025-09-03)
 
 
