@@ -35,7 +35,7 @@ func TestMetadataPropagatorInterceptor_IncomingToOutgoing(t *testing.T) {
 	qt := quicktest.New(t)
 
 	// Outgoing metadata is not set, but incoming is present
-	incomingMD := metadata.Pairs("token", "abc123")
+	incomingMD := metadata.Pairs("authorization", "Bearer abc123")
 	ctx := metadata.NewIncomingContext(context.Background(), incomingMD)
 
 	called := false
@@ -44,7 +44,7 @@ func TestMetadataPropagatorInterceptor_IncomingToOutgoing(t *testing.T) {
 		// Outgoing metadata should be set from incoming
 		md, ok := metadata.FromOutgoingContext(ctx)
 		qt.Assert(ok, quicktest.IsTrue)
-		qt.Check(md["token"], quicktest.DeepEquals, []string{"abc123"})
+		qt.Check(md["authorization"], quicktest.DeepEquals, []string{"Bearer abc123"})
 		return nil
 	}
 
@@ -77,7 +77,7 @@ func TestMetadataPropagatorInterceptor_BothIncomingAndOutgoing(t *testing.T) {
 	qt := quicktest.New(t)
 
 	// Both incoming and outgoing metadata are set; outgoing should take precedence
-	incomingMD := metadata.Pairs("token", "abc123")
+	incomingMD := metadata.Pairs("authorization", "Bearer abc123")
 	outgoingMD := metadata.Pairs("foo", "bar")
 	ctx := metadata.NewIncomingContext(context.Background(), incomingMD)
 	ctx = metadata.NewOutgoingContext(ctx, outgoingMD)
@@ -88,7 +88,7 @@ func TestMetadataPropagatorInterceptor_BothIncomingAndOutgoing(t *testing.T) {
 		md, ok := metadata.FromOutgoingContext(ctx)
 		qt.Assert(ok, quicktest.IsTrue)
 		qt.Check(md["foo"], quicktest.DeepEquals, []string{"bar"})
-		qt.Assert(md["token"], quicktest.IsNil)
+		qt.Assert(md["authorization"], quicktest.IsNil)
 		return nil
 	}
 
@@ -123,7 +123,7 @@ func TestStreamMetadataPropagatorInterceptor_IncomingToOutgoing(t *testing.T) {
 	qt := quicktest.New(t)
 
 	// Outgoing metadata is not set, but incoming is present
-	incomingMD := metadata.Pairs("token", "abc123")
+	incomingMD := metadata.Pairs("authorization", "Bearer abc123")
 	ctx := metadata.NewIncomingContext(context.Background(), incomingMD)
 
 	called := false
@@ -132,7 +132,7 @@ func TestStreamMetadataPropagatorInterceptor_IncomingToOutgoing(t *testing.T) {
 		// Outgoing metadata should be set from incoming
 		md, ok := metadata.FromOutgoingContext(ctx)
 		qt.Assert(ok, quicktest.IsTrue)
-		qt.Check(md["token"], quicktest.DeepEquals, []string{"abc123"})
+		qt.Check(md["authorization"], quicktest.DeepEquals, []string{"Bearer abc123"})
 		return nil, nil
 	}
 
@@ -165,7 +165,7 @@ func TestStreamMetadataPropagatorInterceptor_BothIncomingAndOutgoing(t *testing.
 	qt := quicktest.New(t)
 
 	// Both incoming and outgoing metadata are set; outgoing should take precedence
-	incomingMD := metadata.Pairs("token", "abc123")
+	incomingMD := metadata.Pairs("authorization", "Bearer abc123")
 	outgoingMD := metadata.Pairs("foo", "bar")
 	ctx := metadata.NewIncomingContext(context.Background(), incomingMD)
 	ctx = metadata.NewOutgoingContext(ctx, outgoingMD)
@@ -176,7 +176,7 @@ func TestStreamMetadataPropagatorInterceptor_BothIncomingAndOutgoing(t *testing.
 		md, ok := metadata.FromOutgoingContext(ctx)
 		qt.Assert(ok, quicktest.IsTrue)
 		qt.Check(md["foo"], quicktest.DeepEquals, []string{"bar"})
-		qt.Assert(md["token"], quicktest.IsNil)
+		qt.Assert(md["authorization"], quicktest.IsNil)
 		return nil, nil
 	}
 
