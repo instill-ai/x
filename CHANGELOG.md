@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.2-alpha](https://github.com/instill-ai/x/compare/v0.10.1-alpha...v0.10.2-alpha) (2025-10-27)
+
+
+### Miscellaneous
+
+* **error:** add repository-to-domain error method ([#68](https://github.com/instill-ai/x/issues/68)) ([6d7061c](https://github.com/instill-ai/x/commit/6d7061cca7820fa72400f31d59da526395ab0cc2))
+
 ## [0.10.1-alpha](https://github.com/instill-ai/x/compare/v0.10.0-alpha...v0.10.1-alpha) (2025-10-12)
 
 
