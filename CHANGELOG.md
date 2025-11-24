@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.11.0-alpha](https://github.com/instill-ai/x/compare/v0.10.1-alpha...v0.11.0-alpha) (2025-11-24)
+
+
+### Features
+
+* **file:** add SupportsFileType function for type validation ([#72](https://github.com/instill-ai/x/issues/72)) ([686e098](https://github.com/instill-ai/x/commit/686e0983cf51816b4cae3fb58a41e537688117e2))
+* **file:** centralize file type detection and conversion utilities ([#70](https://github.com/instill-ai/x/issues/70)) ([7db770c](https://github.com/instill-ai/x/commit/7db770caec145685b75f231e74d9598ed3245de5))
+
+
+### Miscellaneous
+
+* **error:** add repository-to-domain error method ([#68](https://github.com/instill-ai/x/issues/68)) ([6d7061c](https://github.com/instill-ai/x/commit/6d7061cca7820fa72400f31d59da526395ab0cc2))
+
 ## [0.10.1-alpha](https://github.com/instill-ai/x/compare/v0.10.0-alpha...v0.10.1-alpha) (2025-10-12)
 
 
