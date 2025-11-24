@@ -567,10 +567,67 @@ func GetDataURIPrefix(fileType artifactpb.File_Type) string {
 	return "data:" + mimeType + ";base64,"
 }
 
-// NeedsFileTypeConversion checks if a file type needs conversion to AI-supported format.
+// IsFileTypeSupported returns true if pipeline-backend/pkg/data supports this file type
+func IsFileTypeSupported(fileType artifactpb.File_Type) bool {
+	switch fileType {
+	// Documents - supported by pipeline-backend/pkg/data/document.go
+	case artifactpb.File_TYPE_PDF,
+		artifactpb.File_TYPE_DOCX,
+		artifactpb.File_TYPE_DOC,
+		artifactpb.File_TYPE_PPTX,
+		artifactpb.File_TYPE_PPT,
+		artifactpb.File_TYPE_XLSX,
+		artifactpb.File_TYPE_XLS,
+		artifactpb.File_TYPE_HTML,
+		artifactpb.File_TYPE_TEXT,
+		artifactpb.File_TYPE_MARKDOWN,
+		artifactpb.File_TYPE_CSV:
+		return true
+
+	// Images - supported by pipeline-backend/pkg/data/image.go
+	case artifactpb.File_TYPE_PNG,
+		artifactpb.File_TYPE_JPEG,
+		artifactpb.File_TYPE_WEBP,
+		artifactpb.File_TYPE_HEIC,
+		artifactpb.File_TYPE_HEIF,
+		artifactpb.File_TYPE_GIF,
+		artifactpb.File_TYPE_BMP,
+		artifactpb.File_TYPE_TIFF,
+		artifactpb.File_TYPE_AVIF:
+		return true
+
+	// Audio - supported by pipeline-backend/pkg/data/audio.go
+	case artifactpb.File_TYPE_MP3,
+		artifactpb.File_TYPE_WAV,
+		artifactpb.File_TYPE_AAC,
+		artifactpb.File_TYPE_OGG,
+		artifactpb.File_TYPE_FLAC,
+		artifactpb.File_TYPE_AIFF,
+		artifactpb.File_TYPE_M4A,
+		artifactpb.File_TYPE_WMA,
+		artifactpb.File_TYPE_WEBM_AUDIO:
+		return true
+
+	// Video - supported by pipeline-backend/pkg/data/video.go
+	case artifactpb.File_TYPE_MP4,
+		artifactpb.File_TYPE_MPEG,
+		artifactpb.File_TYPE_MOV,
+		artifactpb.File_TYPE_AVI,
+		artifactpb.File_TYPE_FLV,
+		artifactpb.File_TYPE_WMV,
+		artifactpb.File_TYPE_MKV,
+		artifactpb.File_TYPE_WEBM_VIDEO:
+		return true
+
+	default:
+		return false
+	}
+}
+
+// NeedFileTypeConversion checks if a file type needs conversion to AI-supported format.
 // Returns (needsConversion bool, targetFormat string, targetFileType File_Type).
 // Based on standard formats for AI/LLM processing: PNG (images), OGG (audio), MP4 (video), PDF (documents).
-func NeedsFileTypeConversion(fileType artifactpb.File_Type) (needsConversion bool, targetFormat string, targetFileType artifactpb.File_Type) {
+func NeedFileTypeConversion(fileType artifactpb.File_Type) (need bool, targetFormat string, targetFileType artifactpb.File_Type) {
 	switch fileType {
 	// Standard image format - no conversion needed
 	case artifactpb.File_TYPE_PNG:

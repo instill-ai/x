@@ -235,7 +235,7 @@ func TestNeedsFileTypeConversion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotNeedsConv, gotTargetFormat, gotTargetType := NeedsFileTypeConversion(tt.fileType)
+			gotNeedsConv, gotTargetFormat, gotTargetType := NeedFileTypeConversion(tt.fileType)
 			if gotNeedsConv != tt.wantNeedsConv {
 				t.Errorf("NeedsFileTypeConversion() needsConversion = %v, want %v", gotNeedsConv, tt.wantNeedsConv)
 			}
