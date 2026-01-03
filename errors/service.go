@@ -44,4 +44,7 @@ var (
 
 	// ErrPasswordNotMatch is used when passwords do not match
 	ErrPasswordNotMatch = errors.New("password not match")
+
+	// ErrNeedUpgradePlan is used when the user needs to upgrade their plan
+	ErrNeedUpgradePlan = errors.New("no permission, please upgrade your plan")
 )
