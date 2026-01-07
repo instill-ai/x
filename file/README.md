@@ -112,14 +112,21 @@ ext := file.FileTypeToExtension(artifactpb.File_TYPE_PDF)
 // Returns: "pdf"
 ```
 
-## AI-Supported Standard Formats
+## Gemini-Native Formats
 
-For optimal AI/LLM processing, the package recognizes these standard formats:
+The package aligns with Gemini API supported formats (see `pipeline-backend/pkg/component/ai/gemini/v0/common.go`).
 
-- **Documents**: PDF (converts from DOC, DOCX, PPT, PPTX, XLS, XLSX, HTML, TEXT, MARKDOWN, CSV)
-- **Images**: PNG (converts from JPEG, GIF, BMP, TIFF, AVIF, WEBP, HEIC, HEIF)
-- **Audio**: OGG (converts from MP3, WAV, AAC, M4A, WMA, FLAC, AIFF, WEBM_AUDIO)
-- **Video**: MP4 (converts from MKV, MPEG, MOV, AVI, FLV, WMV, WEBM_VIDEO)
+**Gemini-native formats (no conversion needed):**
+- **Documents**: PDF
+- **Images**: PNG, JPEG, WEBP, HEIC, HEIF
+- **Audio**: WAV, MP3, AIFF, AAC, OGG, FLAC
+- **Video**: MP4, MPEG, MOV, AVI, FLV, WMV, WEBM
+
+**Formats requiring conversion:**
+- **Documents**: DOC, DOCX, PPT, PPTX, XLS, XLSX, HTML, TEXT, MARKDOWN, CSV → PDF
+- **Images**: GIF, BMP, TIFF, AVIF → PNG
+- **Audio**: M4A, WMA, WEBM_AUDIO → OGG
+- **Video**: MKV → MP4
 
 ## Usage Examples
 

@@ -626,54 +626,54 @@ func IsFileTypeSupported(fileType artifactpb.File_Type) bool {
 
 // NeedFileTypeConversion checks if a file type needs conversion to AI-supported format.
 // Returns (needsConversion bool, targetFormat string, targetFileType File_Type).
-// Based on standard formats for AI/LLM processing: PNG (images), OGG (audio), MP4 (video), PDF (documents).
+// Based on Gemini-native formats: see pipeline-backend/pkg/component/ai/gemini/v0/common.go
 func NeedFileTypeConversion(fileType artifactpb.File_Type) (need bool, targetFormat string, targetFileType artifactpb.File_Type) {
 	switch fileType {
-	// Standard image format - no conversion needed
-	case artifactpb.File_TYPE_PNG:
-		return false, "", artifactpb.File_TYPE_UNSPECIFIED
-
-	// Convertible image formats - convert to PNG
-	case artifactpb.File_TYPE_GIF,
-		artifactpb.File_TYPE_BMP,
-		artifactpb.File_TYPE_TIFF,
-		artifactpb.File_TYPE_AVIF,
+	// Gemini-native image formats - no conversion needed
+	case artifactpb.File_TYPE_PNG,
 		artifactpb.File_TYPE_JPEG,
 		artifactpb.File_TYPE_WEBP,
 		artifactpb.File_TYPE_HEIC,
 		artifactpb.File_TYPE_HEIF:
-		return true, "png", artifactpb.File_TYPE_PNG
-
-	// Standard audio format - no conversion needed
-	case artifactpb.File_TYPE_OGG:
 		return false, "", artifactpb.File_TYPE_UNSPECIFIED
 
-	// Convertible audio formats - convert to OGG
-	case artifactpb.File_TYPE_MP3,
-		artifactpb.File_TYPE_WAV,
-		artifactpb.File_TYPE_AAC,
-		artifactpb.File_TYPE_M4A,
-		artifactpb.File_TYPE_WMA,
-		artifactpb.File_TYPE_FLAC,
+	// Convertible image formats - convert to PNG (Gemini doesn't support these)
+	case artifactpb.File_TYPE_GIF,
+		artifactpb.File_TYPE_BMP,
+		artifactpb.File_TYPE_TIFF,
+		artifactpb.File_TYPE_AVIF:
+		return true, "png", artifactpb.File_TYPE_PNG
+
+	// Gemini-native audio formats - no conversion needed
+	case artifactpb.File_TYPE_WAV,
+		artifactpb.File_TYPE_MP3,
 		artifactpb.File_TYPE_AIFF,
+		artifactpb.File_TYPE_AAC,
+		artifactpb.File_TYPE_OGG,
+		artifactpb.File_TYPE_FLAC:
+		return false, "", artifactpb.File_TYPE_UNSPECIFIED
+
+	// Convertible audio formats - convert to OGG (Gemini doesn't support these)
+	case artifactpb.File_TYPE_M4A,
+		artifactpb.File_TYPE_WMA,
 		artifactpb.File_TYPE_WEBM_AUDIO:
 		return true, "ogg", artifactpb.File_TYPE_OGG
 
-	// Standard video format - no conversion needed
-	case artifactpb.File_TYPE_MP4:
-		return false, "", artifactpb.File_TYPE_UNSPECIFIED
-
-	// Convertible video formats - convert to MP4
-	case artifactpb.File_TYPE_MKV,
+	// Gemini-native video formats - no conversion needed
+	case artifactpb.File_TYPE_MP4,
 		artifactpb.File_TYPE_MPEG,
 		artifactpb.File_TYPE_MOV,
 		artifactpb.File_TYPE_AVI,
 		artifactpb.File_TYPE_FLV,
 		artifactpb.File_TYPE_WMV,
 		artifactpb.File_TYPE_WEBM_VIDEO:
+		return false, "", artifactpb.File_TYPE_UNSPECIFIED
+
+	// Convertible video formats - convert to MP4 (Gemini doesn't support these)
+	case artifactpb.File_TYPE_MKV:
 		return true, "mp4", artifactpb.File_TYPE_MP4
 
-	// Standard document format - no conversion needed
+	// Gemini-native document format - no conversion needed
 	case artifactpb.File_TYPE_PDF:
 		return false, "", artifactpb.File_TYPE_UNSPECIFIED
 
@@ -697,8 +697,59 @@ func NeedFileTypeConversion(fileType artifactpb.File_Type) (need bool, targetFor
 
 // GetConvertedFileTypeInfo returns the converted file type enum and extension for a given file type.
 // This is used for determining standardized file conversions (e.g., DOCX → PDF).
+// For Gemini-native formats, returns the actual file extension and MIME type.
 // Returns (convertedFileType, extension, mimeType) or (UNSPECIFIED, "", "") if no conversion is defined.
 func GetConvertedFileTypeInfo(fileType artifactpb.File_Type) (artifactpb.ConvertedFileType, string, string) {
+	// For Gemini-native formats, return their actual extension and MIME type
+	switch fileType {
+	// Gemini-native image formats
+	case artifactpb.File_TYPE_PNG:
+		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_IMAGE, "png", "image/png"
+	case artifactpb.File_TYPE_JPEG:
+		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_IMAGE, "jpg", "image/jpeg"
+	case artifactpb.File_TYPE_WEBP:
+		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_IMAGE, "webp", "image/webp"
+	case artifactpb.File_TYPE_HEIC:
+		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_IMAGE, "heic", "image/heic"
+	case artifactpb.File_TYPE_HEIF:
+		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_IMAGE, "heif", "image/heif"
+
+	// Gemini-native audio formats
+	case artifactpb.File_TYPE_WAV:
+		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_AUDIO, "wav", "audio/wav"
+	case artifactpb.File_TYPE_MP3:
+		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_AUDIO, "mp3", "audio/mpeg"
+	case artifactpb.File_TYPE_AIFF:
+		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_AUDIO, "aiff", "audio/aiff"
+	case artifactpb.File_TYPE_AAC:
+		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_AUDIO, "aac", "audio/aac"
+	case artifactpb.File_TYPE_OGG:
+		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_AUDIO, "ogg", "audio/ogg"
+	case artifactpb.File_TYPE_FLAC:
+		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_AUDIO, "flac", "audio/flac"
+
+	// Gemini-native video formats
+	case artifactpb.File_TYPE_MP4:
+		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_VIDEO, "mp4", "video/mp4"
+	case artifactpb.File_TYPE_MPEG:
+		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_VIDEO, "mpeg", "video/mpeg"
+	case artifactpb.File_TYPE_MOV:
+		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_VIDEO, "mov", "video/quicktime"
+	case artifactpb.File_TYPE_AVI:
+		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_VIDEO, "avi", "video/x-msvideo"
+	case artifactpb.File_TYPE_FLV:
+		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_VIDEO, "flv", "video/x-flv"
+	case artifactpb.File_TYPE_WMV:
+		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_VIDEO, "wmv", "video/x-ms-wmv"
+	case artifactpb.File_TYPE_WEBM_VIDEO:
+		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_VIDEO, "webm", "video/webm"
+
+	// Gemini-native document format
+	case artifactpb.File_TYPE_PDF:
+		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_DOCUMENT, "pdf", "application/pdf"
+	}
+
+	// For non-native formats, fall back to media type based logic
 	mediaType := FileTypeToMediaType(fileType)
 
 	switch mediaType {

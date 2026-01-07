@@ -198,29 +198,45 @@ func TestNeedsFileTypeConversion(t *testing.T) {
 		wantTargetFormat string
 		wantTargetType   artifactpb.File_Type
 	}{
-		// Images - standard format
+		// Images - Gemini-native formats (no conversion needed)
 		{"PNG no conversion", artifactpb.File_TYPE_PNG, false, "", artifactpb.File_TYPE_UNSPECIFIED},
+		{"JPEG no conversion", artifactpb.File_TYPE_JPEG, false, "", artifactpb.File_TYPE_UNSPECIFIED},
+		{"WEBP no conversion", artifactpb.File_TYPE_WEBP, false, "", artifactpb.File_TYPE_UNSPECIFIED},
+		{"HEIC no conversion", artifactpb.File_TYPE_HEIC, false, "", artifactpb.File_TYPE_UNSPECIFIED},
+		{"HEIF no conversion", artifactpb.File_TYPE_HEIF, false, "", artifactpb.File_TYPE_UNSPECIFIED},
 
-		// Images - needs conversion
-		{"JPEG to PNG", artifactpb.File_TYPE_JPEG, true, "png", artifactpb.File_TYPE_PNG},
+		// Images - needs conversion (Gemini doesn't support these)
 		{"GIF to PNG", artifactpb.File_TYPE_GIF, true, "png", artifactpb.File_TYPE_PNG},
-		{"WEBP to PNG", artifactpb.File_TYPE_WEBP, true, "png", artifactpb.File_TYPE_PNG},
+		{"BMP to PNG", artifactpb.File_TYPE_BMP, true, "png", artifactpb.File_TYPE_PNG},
+		{"TIFF to PNG", artifactpb.File_TYPE_TIFF, true, "png", artifactpb.File_TYPE_PNG},
+		{"AVIF to PNG", artifactpb.File_TYPE_AVIF, true, "png", artifactpb.File_TYPE_PNG},
 
-		// Audio - standard format
+		// Audio - Gemini-native formats (no conversion needed)
+		{"WAV no conversion", artifactpb.File_TYPE_WAV, false, "", artifactpb.File_TYPE_UNSPECIFIED},
+		{"MP3 no conversion", artifactpb.File_TYPE_MP3, false, "", artifactpb.File_TYPE_UNSPECIFIED},
+		{"AIFF no conversion", artifactpb.File_TYPE_AIFF, false, "", artifactpb.File_TYPE_UNSPECIFIED},
+		{"AAC no conversion", artifactpb.File_TYPE_AAC, false, "", artifactpb.File_TYPE_UNSPECIFIED},
 		{"OGG no conversion", artifactpb.File_TYPE_OGG, false, "", artifactpb.File_TYPE_UNSPECIFIED},
+		{"FLAC no conversion", artifactpb.File_TYPE_FLAC, false, "", artifactpb.File_TYPE_UNSPECIFIED},
 
-		// Audio - needs conversion
-		{"MP3 to OGG", artifactpb.File_TYPE_MP3, true, "ogg", artifactpb.File_TYPE_OGG},
-		{"WAV to OGG", artifactpb.File_TYPE_WAV, true, "ogg", artifactpb.File_TYPE_OGG},
+		// Audio - needs conversion (Gemini doesn't support these)
+		{"M4A to OGG", artifactpb.File_TYPE_M4A, true, "ogg", artifactpb.File_TYPE_OGG},
+		{"WMA to OGG", artifactpb.File_TYPE_WMA, true, "ogg", artifactpb.File_TYPE_OGG},
+		{"WEBM_AUDIO to OGG", artifactpb.File_TYPE_WEBM_AUDIO, true, "ogg", artifactpb.File_TYPE_OGG},
 
-		// Video - standard format
+		// Video - Gemini-native formats (no conversion needed)
 		{"MP4 no conversion", artifactpb.File_TYPE_MP4, false, "", artifactpb.File_TYPE_UNSPECIFIED},
+		{"MPEG no conversion", artifactpb.File_TYPE_MPEG, false, "", artifactpb.File_TYPE_UNSPECIFIED},
+		{"MOV no conversion", artifactpb.File_TYPE_MOV, false, "", artifactpb.File_TYPE_UNSPECIFIED},
+		{"AVI no conversion", artifactpb.File_TYPE_AVI, false, "", artifactpb.File_TYPE_UNSPECIFIED},
+		{"FLV no conversion", artifactpb.File_TYPE_FLV, false, "", artifactpb.File_TYPE_UNSPECIFIED},
+		{"WMV no conversion", artifactpb.File_TYPE_WMV, false, "", artifactpb.File_TYPE_UNSPECIFIED},
+		{"WEBM_VIDEO no conversion", artifactpb.File_TYPE_WEBM_VIDEO, false, "", artifactpb.File_TYPE_UNSPECIFIED},
 
-		// Video - needs conversion
-		{"MOV to MP4", artifactpb.File_TYPE_MOV, true, "mp4", artifactpb.File_TYPE_MP4},
-		{"AVI to MP4", artifactpb.File_TYPE_AVI, true, "mp4", artifactpb.File_TYPE_MP4},
+		// Video - needs conversion (Gemini doesn't support these)
+		{"MKV to MP4", artifactpb.File_TYPE_MKV, true, "mp4", artifactpb.File_TYPE_MP4},
 
-		// Documents - standard format
+		// Documents - Gemini-native format (no conversion needed)
 		{"PDF no conversion", artifactpb.File_TYPE_PDF, false, "", artifactpb.File_TYPE_UNSPECIFIED},
 
 		// Documents - needs conversion
