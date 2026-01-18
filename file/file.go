@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	artifactpb "github.com/instill-ai/protogen-go/artifact/artifact/v1alpha"
+	artifactpb "github.com/instill-ai/protogen-go/artifact/v1alpha"
 )
 
 // FileTypeToMimeType converts a File_Type enum to its corresponding MIME type string.
@@ -645,6 +645,7 @@ func NeedFileTypeConversion(fileType artifactpb.File_Type) (need bool, targetFor
 		return true, "png", artifactpb.File_TYPE_PNG
 
 	// Gemini-native audio formats - no conversion needed
+	// Per https://ai.google.dev/gemini-api/docs/audio#supported-formats
 	case artifactpb.File_TYPE_WAV,
 		artifactpb.File_TYPE_MP3,
 		artifactpb.File_TYPE_AIFF,
@@ -653,7 +654,7 @@ func NeedFileTypeConversion(fileType artifactpb.File_Type) (need bool, targetFor
 		artifactpb.File_TYPE_FLAC:
 		return false, "", artifactpb.File_TYPE_UNSPECIFIED
 
-	// Convertible audio formats - convert to OGG (Gemini doesn't support these)
+	// Convertible audio formats - convert to OGG (not in Gemini's supported list)
 	case artifactpb.File_TYPE_M4A,
 		artifactpb.File_TYPE_WMA,
 		artifactpb.File_TYPE_WEBM_AUDIO:

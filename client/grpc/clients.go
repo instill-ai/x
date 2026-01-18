@@ -8,11 +8,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	artifactpb "github.com/instill-ai/protogen-go/artifact/artifact/v1alpha"
-	mgmtpb "github.com/instill-ai/protogen-go/core/mgmt/v1beta"
-	usagepb "github.com/instill-ai/protogen-go/core/usage/v1beta"
-	modelpb "github.com/instill-ai/protogen-go/model/model/v1alpha"
-	pipelinepb "github.com/instill-ai/protogen-go/pipeline/pipeline/v1beta"
+	artifactpb "github.com/instill-ai/protogen-go/artifact/v1alpha"
+	mgmtpb "github.com/instill-ai/protogen-go/mgmt/v1beta"
+	usagepb "github.com/instill-ai/protogen-go/usage/v1beta"
+	modelpb "github.com/instill-ai/protogen-go/model/v1alpha"
+	pipelinepb "github.com/instill-ai/protogen-go/pipeline/v1beta"
 )
 
 // clientInfo contains information about a client type

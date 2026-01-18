@@ -18,8 +18,6 @@ import (
 
 	"errors"
 	"io"
-
-	mgmtpb "github.com/instill-ai/protogen-go/core/mgmt/v1beta"
 )
 
 func TestHTTPResponseModifier(t *testing.T) {
@@ -274,35 +272,22 @@ func TestCustomHeaderMatcher(t *testing.T) {
 func TestInjectOwnerToContext(t *testing.T) {
 	tests := []struct {
 		name        string
-		owner       *mgmtpb.User
+		userUID     string
 		expected    map[string]string
 		description string
 	}{
 		{
-			name: "valid owner",
-			owner: &mgmtpb.User{
-				Uid: stringPtr("test-user-123"),
-			},
+			name:    "valid user uid",
+			userUID: "test-user-123",
 			expected: map[string]string{
 				constant.HeaderAuthTypeKey: "user",
 				constant.HeaderUserUIDKey:  "test-user-123",
 			},
-			description: "should inject owner metadata to context",
+			description: "should inject user uid metadata to context",
 		},
 		{
-			name:  "nil owner",
-			owner: nil,
-			expected: map[string]string{
-				constant.HeaderAuthTypeKey: "user",
-				constant.HeaderUserUIDKey:  "",
-			},
-			description: "should handle nil owner gracefully",
-		},
-		{
-			name: "empty uid",
-			owner: &mgmtpb.User{
-				Uid: stringPtr(""),
-			},
+			name:    "empty uid",
+			userUID: "",
 			expected: map[string]string{
 				constant.HeaderAuthTypeKey: "user",
 				constant.HeaderUserUIDKey:  "",
@@ -315,7 +300,7 @@ func TestInjectOwnerToContext(t *testing.T) {
 		qt := quicktest.New(t)
 		qt.Run(tt.name, func(c *quicktest.C) {
 			ctx := context.Background()
-			resultCtx := InjectOwnerToContext(ctx, tt.owner)
+			resultCtx := InjectOwnerToContext(ctx, tt.userUID)
 
 			// Extract metadata from context
 			md, ok := metadata.FromOutgoingContext(resultCtx)
@@ -533,10 +518,6 @@ func TestErrorHandler_FailedPreconditionEmptyViolations(t *testing.T) {
 	// Should default to 400 when no violations
 	qt := quicktest.New(t)
 	qt.Check(w.Code, quicktest.Equals, http.StatusBadRequest)
-}
-
-func stringPtr(s string) *string {
-	return &s
 }
 
 type mockMarshaler struct {

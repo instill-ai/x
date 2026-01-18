@@ -18,7 +18,6 @@ import (
 
 	"github.com/instill-ai/x/constant"
 
-	mgmtpb "github.com/instill-ai/protogen-go/core/mgmt/v1beta"
 	logx "github.com/instill-ai/x/log"
 )
 
@@ -189,9 +188,10 @@ func CustomHeaderMatcher(key string) (string, bool) {
 	}
 }
 
-// InjectOwnerToContext injects the owner to the context for initializing models
-func InjectOwnerToContext(ctx context.Context, owner *mgmtpb.User) context.Context {
+// InjectOwnerToContext injects the owner to the context for initializing models.
+// The userUID parameter is the internal UUID string of the user.
+func InjectOwnerToContext(ctx context.Context, userUID string) context.Context {
 	ctx = metadata.AppendToOutgoingContext(ctx, constant.HeaderAuthTypeKey, "user")
-	ctx = metadata.AppendToOutgoingContext(ctx, constant.HeaderUserUIDKey, owner.GetUid())
+	ctx = metadata.AppendToOutgoingContext(ctx, constant.HeaderUserUIDKey, userUID)
 	return ctx
 }
