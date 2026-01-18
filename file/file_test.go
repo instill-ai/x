@@ -3,7 +3,7 @@ package file
 import (
 	"testing"
 
-	artifactpb "github.com/instill-ai/protogen-go/artifact/artifact/v1alpha"
+	artifactpb "github.com/instill-ai/protogen-go/artifact/v1alpha"
 )
 
 func TestFileTypeToMimeType(t *testing.T) {
