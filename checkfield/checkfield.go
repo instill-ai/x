@@ -100,6 +100,9 @@ func CheckCreateOutputOnlyFields(msg any, outputOnlyFields []string) error {
 			f.SetFloat(0)
 		case reflect.String:
 			f.SetString("")
+		case reflect.Slice:
+			// Clear slice fields by setting to nil
+			f.Set(reflect.Zero(f.Type()))
 		case reflect.Ptr:
 			if !f.IsNil() && len(fieldNames) > 1 && reflect.ValueOf(f).Kind() == reflect.Struct {
 				path, fieldNames = path+"."+fieldNames[1], fieldNames[1:]
