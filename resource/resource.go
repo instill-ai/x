@@ -28,14 +28,38 @@ func GetRequestSingleHeader(ctx context.Context, key string) string {
 }
 
 // GetRequesterUIDAndUserUID extracts the requester and user UIDs from the
-// request header.
+// request header. Handles both raw UUIDs and permalink format (e.g., "users/{uid}").
 func GetRequesterUIDAndUserUID(ctx context.Context) (uuid.UUID, uuid.UUID) {
-	requesterUID := GetRequestSingleHeader(ctx, constant.HeaderRequesterUIDKey)
-	userUID := GetRequestSingleHeader(ctx, constant.HeaderUserUIDKey)
+	requesterUID := extractUIDFromPermalink(GetRequestSingleHeader(ctx, constant.HeaderRequesterUIDKey))
+	userUID := extractUIDFromPermalink(GetRequestSingleHeader(ctx, constant.HeaderUserUIDKey))
 	if strings.TrimSpace(requesterUID) == "" {
 		requesterUID = userUID
 	}
 	return uuid.FromStringOrNil(requesterUID), uuid.FromStringOrNil(userUID)
+}
+
+// extractUIDFromPermalink extracts the UID from a permalink or returns the input as-is.
+// Handles formats like "users/{uid}" (permalink), "organizations/{uid}", or just "{uid}".
+// Note: This extracts from permalink format (users/{uid}), not AIP resource name (users/{user_id}).
+func extractUIDFromPermalink(permalink string) string {
+	return ExtractResourceID(permalink)
+}
+
+// ExtractResourceID extracts the last segment (resource ID) from an AIP-compliant resource name.
+// Works with both permalinks (users/{uid}) and resource names (namespaces/{ns}/projects/{project}).
+// Examples:
+//   - "namespaces/ns/projects/proj-123" -> "proj-123"
+//   - "users/user-uid-456" -> "user-uid-456"
+//   - "proj-123" -> "proj-123" (returns as-is if no slash)
+func ExtractResourceID(resourceName string) string {
+	resourceName = strings.TrimSpace(resourceName)
+	if resourceName == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(resourceName, "/"); idx != -1 {
+		return resourceName[idx+1:]
+	}
+	return resourceName
 }
 
 // base62Chars is the character set for base62 encoding (alphanumeric, URL-safe).

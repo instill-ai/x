@@ -13,7 +13,9 @@ require (
 	github.com/instill-ai/protogen-go v0.3.3-alpha.0.20260118003146-5bd5d4129f45
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/minio/minio-go/v7 v7.0.92
+	github.com/openfga/api/proto v0.0.0-20240723155248-7e5be7b65c27
 	github.com/prometheus/client_golang v1.22.0
+	github.com/redis/go-redis/v9 v9.9.0
 	github.com/stretchr/testify v1.10.0
 	github.com/uber-go/tally/v4 v4.1.17
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.60.0
@@ -47,7 +49,9 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.2 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/envoyproxy/protoc-gen-validate v1.2.1 // indirect
 	github.com/facebookgo/clock v0.0.0-20150410010913-600d898af40a // indirect
 	github.com/go-ini/ini v1.67.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect

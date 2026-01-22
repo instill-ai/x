@@ -30,6 +30,26 @@ func TestGetRequesterUIDAndUserUID(t *testing.T) {
 	c.Check(checkUserUID, qt.Equals, userUID)
 }
 
+func TestGetRequesterUIDAndUserUID_PermalinkFormat(t *testing.T) {
+	// Test with permalink format (e.g., "users/{uid}")
+	// The API Gateway may pass permalinks from ValidateToken response
+	requesterUIDStr := uuid.Must(uuid.NewV4()).String()
+	userUIDStr := uuid.Must(uuid.NewV4()).String()
+	m := make(map[string]string)
+	// API Gateway may pass permalinks instead of raw UUIDs
+	m[constant.HeaderRequesterUIDKey] = "users/" + requesterUIDStr
+	m[constant.HeaderUserUIDKey] = "users/" + userUIDStr
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.New(m))
+
+	c := qt.New(t)
+	checkRequesterUID, checkUserUID := resource.GetRequesterUIDAndUserUID(ctx)
+	requesterUID := uuid.FromStringOrNil(requesterUIDStr)
+	userUID := uuid.FromStringOrNil(userUIDStr)
+
+	c.Check(checkRequesterUID, qt.Equals, requesterUID)
+	c.Check(checkUserUID, qt.Equals, userUID)
+}
+
 func TestGenerateShortID(t *testing.T) {
 	c := qt.New(t)
 
