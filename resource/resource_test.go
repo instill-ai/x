@@ -103,6 +103,43 @@ func TestGeneratePrefixedID(t *testing.T) {
 	}
 }
 
+func TestGenerateOwnerID(t *testing.T) {
+	c := qt.New(t)
+	uid := uuid.Must(uuid.FromString("550e8400-e29b-41d4-a716-446655440000"))
+
+	tests := []struct {
+		name           string
+		displayName    string
+		fallbackPrefix string
+		wantPrefix     string
+	}{
+		// User ID cases
+		{"normal user name", "John Doe", "user", "john-doe-"},
+		{"user empty name fallback", "", "user", "user-"},
+		{"user special chars fallback", "!@#$%", "user", "user-"},
+		{"long name truncated", "This Is A Very Long Display Name", "user", "this-is-a-very-long-"},
+		// Organization ID cases
+		{"org name", "Acme Corporation", "org", "acme-corporation-"},
+		{"org with special chars", "Instill AI, Inc.", "org", "instill-ai-inc-"},
+		{"org empty name fallback", "", "org", "org-"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			id := resource.GenerateOwnerID(tt.displayName, uid, tt.fallbackPrefix)
+			c.Check(id[:len(tt.wantPrefix)], qt.Equals, tt.wantPrefix)
+			// Same input should produce same output (deterministic)
+			c.Check(resource.GenerateOwnerID(tt.displayName, uid, tt.fallbackPrefix), qt.Equals, id)
+		})
+	}
+
+	// Different UIDs should produce different IDs
+	uid2 := uuid.Must(uuid.FromString("550e8400-e29b-41d4-a716-446655440001"))
+	id1 := resource.GenerateOwnerID("John Doe", uid, "user")
+	id2 := resource.GenerateOwnerID("John Doe", uid2, "user")
+	c.Check(id1, qt.Not(qt.Equals), id2)
+}
+
 func TestGenerateSlug(t *testing.T) {
 	tests := []struct {
 		name        string
