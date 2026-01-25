@@ -92,6 +92,27 @@ func GeneratePrefixedID(prefix string, uid uuid.UUID) string {
 	return fmt.Sprintf("%s-%s", prefix, encoded)
 }
 
+// GenerateUserID creates a user/organization ID from a display name and UUID.
+// The format is: {slug-from-name}-{base62(sha256(uid)[:10])}
+// Example: "John Doe" + UUID -> "john-doe-8f3A2k9E7c1xYz"
+//
+// This combines human-readable slug with UUID-based hash for uniqueness.
+// The slug portion is truncated to 20 characters to keep total length reasonable.
+// Uses GeneratePrefixedID internally for consistent hash generation (80 bits entropy).
+// Falls back to "user" if name is empty or produces no valid slug.
+func GenerateUserID(displayName string, uid uuid.UUID) string {
+	// Generate slug from display name (max 20 chars)
+	slug := GenerateSlug(displayName, 20)
+
+	// If slug is empty (e.g., name is all special chars), use "user" as fallback
+	if slug == "" {
+		slug = "user"
+	}
+
+	// Use GeneratePrefixedID for consistent hash generation
+	return GeneratePrefixedID(slug, uid)
+}
+
 // encodeBase62 encodes bytes to a base62 string.
 func encodeBase62(data []byte) string {
 	// Convert bytes to base62
