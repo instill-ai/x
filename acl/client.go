@@ -60,6 +60,7 @@ type ACLClient struct {
 	readClient   openfga.OpenFGAServiceClient
 	redisClient  *redis.Client
 	storeID      string
+	modelID      string // Cached authorization model ID - fetched once at startup
 	cacheEnabled bool
 	cacheTTL     time.Duration
 	config       Config
@@ -86,6 +87,19 @@ func NewClient(wc openfga.OpenFGAServiceClient, rc openfga.OpenFGAServiceClient,
 
 	storeID := storeResp.Stores[0].Id
 
+	// Fetch and cache the authorization model ID at startup
+	// This avoids fetching the entire model schema on every permission check
+	modelResp, err := wc.ReadAuthorizationModels(context.Background(), &openfga.ReadAuthorizationModelsRequest{
+		StoreId: storeID,
+	})
+	if err != nil {
+		panic(fmt.Sprintf("failed to read OpenFGA authorization models: %v", err))
+	}
+	if len(modelResp.AuthorizationModels) == 0 {
+		panic(fmt.Sprintf("no authorization model found in OpenFGA store %s", storeID))
+	}
+	modelID := modelResp.AuthorizationModels[0].Id
+
 	// Configure permission caching
 	cacheEnabled := cfg.Cache.Enabled
 	cacheTTL := cfg.Cache.CacheTTLDuration()
@@ -93,6 +107,7 @@ func NewClient(wc openfga.OpenFGAServiceClient, rc openfga.OpenFGAServiceClient,
 	log, _ := logx.GetZapLogger(context.Background())
 	log.Info("ACL client initialized",
 		zap.String("storeID", storeID),
+		zap.String("modelID", modelID),
 		zap.Bool("cacheEnabled", cacheEnabled),
 		zap.Duration("cacheTTL", cacheTTL),
 	)
@@ -102,6 +117,7 @@ func NewClient(wc openfga.OpenFGAServiceClient, rc openfga.OpenFGAServiceClient,
 		readClient:   rc,
 		redisClient:  redisClient,
 		storeID:      storeID,
+		modelID:      modelID,
 		cacheEnabled: cacheEnabled,
 		cacheTTL:     cacheTTL,
 		config:       cfg,
@@ -157,21 +173,19 @@ func (c *ACLClient) getClient(ctx context.Context, mode Mode) openfga.OpenFGASer
 	return c.writeClient
 }
 
-// getAuthorizationModelID fetches the latest authorization model ID from OpenFGA.
+// getAuthorizationModelID returns the cached authorization model ID.
+// The model ID is fetched once at startup and cached for the lifetime of the client.
 func (c *ACLClient) getAuthorizationModelID(ctx context.Context) (string, error) {
-	modelResp, err := c.writeClient.ReadAuthorizationModels(ctx, &openfga.ReadAuthorizationModelsRequest{
-		StoreId: c.storeID,
-	})
-	if err != nil {
-		return "", fmt.Errorf("reading authorization models: %w", err)
+	if c.modelID == "" {
+		return "", fmt.Errorf("authorization model ID not initialized")
 	}
+	return c.modelID, nil
+}
 
-	if len(modelResp.AuthorizationModels) == 0 {
-		return "", fmt.Errorf("no authorization model found in store %s", c.storeID)
-	}
-
-	// Return the first (most recent) model
-	return modelResp.AuthorizationModels[0].Id, nil
+// GetModelID returns the cached authorization model ID.
+// This is useful for external code that needs to make direct OpenFGA calls.
+func (c *ACLClient) GetModelID() string {
+	return c.modelID
 }
 
 // permissionCacheKey generates a cache key for permission checks.
@@ -188,7 +202,15 @@ func (c *ACLClient) invalidateObjectCache(ctx context.Context, objectType string
 	log, _ := logx.GetZapLogger(ctx)
 
 	// Pattern to match all permission cache entries for this object
+	// Cache key format: acl:perm:userType:userUID:objectType:objectUID:role
+	// Pattern should match any user and any role for this specific object
 	pattern := fmt.Sprintf("%s*:%s:%s:*", PermissionCachePrefix, objectType, objectUID)
+
+	log.Debug("Invalidating permission cache",
+		zap.String("objectType", objectType),
+		zap.String("objectUID", objectUID),
+		zap.String("pattern", pattern),
+	)
 
 	var cursor uint64
 	var deletedCount int
@@ -202,6 +224,7 @@ func (c *ACLClient) invalidateObjectCache(ctx context.Context, objectType string
 		}
 
 		if len(keys) > 0 {
+			log.Debug("Found cache keys to delete", zap.Strings("keys", keys))
 			if err := c.redisClient.Del(ctx, keys...).Err(); err != nil {
 				log.Warn("Failed to delete cache keys", zap.Error(err), zap.Strings("keys", keys))
 			} else {
@@ -214,13 +237,65 @@ func (c *ACLClient) invalidateObjectCache(ctx context.Context, objectType string
 		}
 	}
 
-	if deletedCount > 0 {
-		log.Debug("Invalidated permission cache",
-			zap.String("objectType", objectType),
-			zap.String("objectUID", objectUID),
-			zap.Int("deletedKeys", deletedCount),
-		)
+	log.Debug("Permission cache invalidation completed",
+		zap.String("objectType", objectType),
+		zap.String("objectUID", objectUID),
+		zap.Int("deletedKeys", deletedCount),
+	)
+}
+
+// invalidateUserObjectCache invalidates cache entries for a specific user on a specific object.
+// This is used when setting permissions for a specific user to ensure their cached "denied" results
+// are immediately invalidated.
+func (c *ACLClient) invalidateUserObjectCache(ctx context.Context, user, objectType, objectUID string) {
+	if !c.cacheEnabled || c.redisClient == nil {
+		return
 	}
+
+	log, _ := logx.GetZapLogger(ctx)
+
+	// Pattern to match all permission cache entries for this user on this object
+	// Cache key format: acl:perm:userType:userUID:objectType:objectUID:role
+	pattern := fmt.Sprintf("%s%s:%s:%s:*", PermissionCachePrefix, user, objectType, objectUID)
+
+	log.Debug("Invalidating user-specific permission cache",
+		zap.String("user", user),
+		zap.String("objectType", objectType),
+		zap.String("objectUID", objectUID),
+		zap.String("pattern", pattern),
+	)
+
+	var cursor uint64
+	var deletedCount int
+	for {
+		var keys []string
+		var err error
+		keys, cursor, err = c.redisClient.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			log.Warn("Failed to scan user cache keys for invalidation", zap.Error(err), zap.String("pattern", pattern))
+			return
+		}
+
+		if len(keys) > 0 {
+			log.Debug("Found user cache keys to delete", zap.Strings("keys", keys))
+			if err := c.redisClient.Del(ctx, keys...).Err(); err != nil {
+				log.Warn("Failed to delete user cache keys", zap.Error(err), zap.Strings("keys", keys))
+			} else {
+				deletedCount += len(keys)
+			}
+		}
+
+		if cursor == 0 {
+			break
+		}
+	}
+
+	log.Debug("User permission cache invalidation completed",
+		zap.String("user", user),
+		zap.String("objectType", objectType),
+		zap.String("objectUID", objectUID),
+		zap.Int("deletedKeys", deletedCount),
+	)
 }
 
 // SetOwner sets the owner of a given object.
@@ -379,6 +454,18 @@ func (c *ACLClient) CheckPermission(ctx context.Context, objectType string, obje
 		return false, fmt.Errorf("getting authorization model: %w", err)
 	}
 
+	// Check if user is pinned (recently had permissions changed)
+	// If so, we need to use HIGHER_CONSISTENCY to bypass OpenFGA's check query cache
+	var consistency openfga.ConsistencyPreference
+	isPinned := false
+	if c.redisClient != nil {
+		pinKey := fmt.Sprintf("db_pin_user:%s:openfga", userUID)
+		if !errors.Is(c.redisClient.Get(ctx, pinKey).Err(), redis.Nil) {
+			isPinned = true
+			consistency = openfga.ConsistencyPreference_HIGHER_CONSISTENCY
+		}
+	}
+
 	log.Debug("CheckPermission",
 		zap.String("userType", userType),
 		zap.String("userUID", userUID),
@@ -387,6 +474,8 @@ func (c *ACLClient) CheckPermission(ctx context.Context, objectType string, obje
 		zap.String("role", role),
 		zap.String("modelID", modelID),
 		zap.String("storeID", c.storeID),
+		zap.Bool("isPinned", isPinned),
+		zap.String("consistency", consistency.String()),
 	)
 
 	// Create a CheckRequest to verify the user's permission
@@ -398,6 +487,7 @@ func (c *ACLClient) CheckPermission(ctx context.Context, objectType string, obje
 			Relation: role,
 			Object:   fmt.Sprintf("%s:%s", objectType, objectUID.String()),
 		},
+		Consistency: consistency,
 	})
 	if err != nil {
 		log.Error("CheckPermission failed", zap.Error(err))
@@ -517,6 +607,24 @@ func (c *ACLClient) GetStoreID() string {
 	return c.storeID
 }
 
+// PinUserForConsistency pins the current user to the primary database for read-after-write consistency.
+// This ensures that subsequent permission checks use HIGHER_CONSISTENCY mode to bypass OpenFGA's
+// check query cache, preventing stale "permission denied" results after permission changes.
+// Should be called after any write operation that affects permissions.
+func (c *ACLClient) PinUserForConsistency(ctx context.Context) {
+	if c.redisClient == nil || c.config.Replica.ReplicationTimeFrame <= 0 {
+		return
+	}
+
+	userUID := resource.GetRequestSingleHeader(ctx, constant.HeaderUserUIDKey)
+	if userUID == "" {
+		return
+	}
+
+	pinKey := fmt.Sprintf("db_pin_user:%s:openfga", userUID)
+	_ = c.redisClient.Set(ctx, pinKey, time.Now(), time.Duration(c.config.Replica.ReplicationTimeFrame)*time.Second)
+}
+
 // SetResourcePermission sets a permission for a user on any resource type.
 // This is a generic method that can be used for any object type (pipeline, model, knowledgebase, etc.).
 // It first deletes any existing permission for the user, then sets the new permission if enable is true.
@@ -548,8 +656,25 @@ func (c *ACLClient) SetResourcePermission(ctx context.Context, objectType string
 		}
 	}
 
-	// Invalidate permission cache for the object
+	// Invalidate permission cache for the object (all users)
 	c.invalidateObjectCache(ctx, objectType, objectUID.String())
+
+	// Also invalidate user-specific cache to ensure any previously cached "denied"
+	// results for this specific user are immediately cleared
+	c.invalidateUserObjectCache(ctx, user, objectType, objectUID.String())
+
+	// Pin the subject user to primary for read-after-write consistency.
+	// When user A grants permission to user B, we need to pin user B to primary
+	// so that user B's subsequent reads see the newly granted permission.
+	// The user format is "user:<UUID>" or "group:<UUID>#member"
+	if c.redisClient != nil && c.config.Replica.ReplicationTimeFrame > 0 {
+		// Extract the UUID from the user string (format: "user:<UUID>" or "group:<UUID>#member")
+		parts := strings.SplitN(user, ":", 2)
+		if len(parts) == 2 {
+			subjectUID := strings.TrimSuffix(parts[1], "#member")
+			_ = c.redisClient.Set(ctx, fmt.Sprintf("db_pin_user:%s:openfga", subjectUID), time.Now(), time.Duration(c.config.Replica.ReplicationTimeFrame)*time.Second)
+		}
+	}
 
 	return nil
 }
@@ -578,8 +703,12 @@ func (c *ACLClient) DeleteResourcePermission(ctx context.Context, objectType str
 		})
 	}
 
-	// Invalidate permission cache for the object
+	// Invalidate permission cache for the object (all users)
 	c.invalidateObjectCache(ctx, objectType, objectUID.String())
+
+	// Also invalidate user-specific cache to ensure any cached results
+	// for this specific user are immediately cleared
+	c.invalidateUserObjectCache(ctx, user, objectType, objectUID.String())
 
 	return nil
 }
