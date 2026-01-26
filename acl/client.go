@@ -430,9 +430,23 @@ func (c *ACLClient) CheckPermission(ctx context.Context, objectType string, obje
 		return false, fmt.Errorf("%w: userUID is empty in check permission", errorsx.ErrUnauthenticated)
 	}
 
-	// Check cache first if enabled
+	// Check if user is pinned (recently had permissions changed)
+	// If so, we need to use HIGHER_CONSISTENCY to bypass OpenFGA's check query cache
+	// and skip the local cache to ensure fresh permission data after grant/revoke
+	var consistency openfga.ConsistencyPreference
+	isPinned := false
+	if c.redisClient != nil {
+		pinKey := fmt.Sprintf("db_pin_user:%s:openfga", userUID)
+		if !errors.Is(c.redisClient.Get(ctx, pinKey).Err(), redis.Nil) {
+			isPinned = true
+			consistency = openfga.ConsistencyPreference_HIGHER_CONSISTENCY
+		}
+	}
+
+	// Check cache first if enabled, but skip cache if user is pinned
+	// (pinned users had recent permission changes and need fresh data)
 	cacheKey := permissionCacheKey(userType, userUID, objectType, objectUID.String(), role)
-	if c.cacheEnabled && c.redisClient != nil {
+	if c.cacheEnabled && c.redisClient != nil && !isPinned {
 		cachedResult, err := c.redisClient.Get(ctx, cacheKey).Result()
 		if err == nil {
 			// Cache hit
@@ -452,18 +466,6 @@ func (c *ACLClient) CheckPermission(ctx context.Context, objectType string, obje
 	modelID, err := c.getAuthorizationModelID(ctx)
 	if err != nil {
 		return false, fmt.Errorf("getting authorization model: %w", err)
-	}
-
-	// Check if user is pinned (recently had permissions changed)
-	// If so, we need to use HIGHER_CONSISTENCY to bypass OpenFGA's check query cache
-	var consistency openfga.ConsistencyPreference
-	isPinned := false
-	if c.redisClient != nil {
-		pinKey := fmt.Sprintf("db_pin_user:%s:openfga", userUID)
-		if !errors.Is(c.redisClient.Get(ctx, pinKey).Err(), redis.Nil) {
-			isPinned = true
-			consistency = openfga.ConsistencyPreference_HIGHER_CONSISTENCY
-		}
 	}
 
 	log.Debug("CheckPermission",
@@ -494,8 +496,9 @@ func (c *ACLClient) CheckPermission(ctx context.Context, objectType string, obje
 		return false, err
 	}
 
-	// Cache the result if caching is enabled
-	if c.cacheEnabled && c.redisClient != nil {
+	// Cache the result if caching is enabled and user is not pinned
+	// Don't cache results for pinned users since their permissions are in flux
+	if c.cacheEnabled && c.redisClient != nil && !isPinned {
 		cacheValue := "0"
 		if data.Allowed {
 			cacheValue = "1"
@@ -505,7 +508,7 @@ func (c *ACLClient) CheckPermission(ctx context.Context, objectType string, obje
 		}
 	}
 
-	log.Debug("CheckPermission result", zap.Bool("allowed", data.Allowed))
+	log.Debug("CheckPermission result", zap.Bool("allowed", data.Allowed), zap.Bool("isPinned", isPinned))
 
 	return data.Allowed, nil
 }
