@@ -674,8 +674,13 @@ func NeedFileTypeConversion(fileType artifactpb.File_Type) (need bool, targetFor
 	case artifactpb.File_TYPE_MKV:
 		return true, "mp4", artifactpb.File_TYPE_MP4
 
-	// Gemini-native document format - no conversion needed
-	case artifactpb.File_TYPE_PDF:
+	// Gemini-native document formats - no conversion needed
+	// PDF and text-based formats (plain text, markdown, CSV, HTML) are directly readable by AI
+	case artifactpb.File_TYPE_PDF,
+		artifactpb.File_TYPE_TEXT,
+		artifactpb.File_TYPE_MARKDOWN,
+		artifactpb.File_TYPE_CSV,
+		artifactpb.File_TYPE_HTML:
 		return false, "", artifactpb.File_TYPE_UNSPECIFIED
 
 	// Convertible document formats - convert to PDF
@@ -684,11 +689,7 @@ func NeedFileTypeConversion(fileType artifactpb.File_Type) (need bool, targetFor
 		artifactpb.File_TYPE_PPT,
 		artifactpb.File_TYPE_PPTX,
 		artifactpb.File_TYPE_XLS,
-		artifactpb.File_TYPE_XLSX,
-		artifactpb.File_TYPE_HTML,
-		artifactpb.File_TYPE_TEXT,
-		artifactpb.File_TYPE_MARKDOWN,
-		artifactpb.File_TYPE_CSV:
+		artifactpb.File_TYPE_XLSX:
 		return true, "pdf", artifactpb.File_TYPE_PDF
 
 	default:
