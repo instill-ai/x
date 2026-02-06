@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -52,6 +53,9 @@ type Client interface {
 	CheckShareLinkPermission(ctx context.Context, shareToken string, objectType string, objectUID uuid.UUID, relation string) (bool, error)
 	// CheckRequesterPermission validates organization impersonation.
 	CheckRequesterPermission(ctx context.Context) error
+	// IsUserPinned checks if the user is currently pinned to the primary database for read-after-write consistency.
+	// This is used to bypass caches and use HIGHER_CONSISTENCY mode in OpenFGA queries.
+	IsUserPinned(ctx context.Context) bool
 }
 
 // ACLClient implements the Client interface with OpenFGA.
@@ -561,7 +565,23 @@ func (c *ACLClient) CheckPublicExecutable(ctx context.Context, objectType string
 	return data.Allowed, nil
 }
 
+// IsUserPinned checks if the user is currently pinned to the primary database for read-after-write consistency.
+// This is used to determine whether to use HIGHER_CONSISTENCY mode in OpenFGA queries
+// and whether to bypass in-memory caches.
+func (c *ACLClient) IsUserPinned(ctx context.Context) bool {
+	if c.redisClient == nil {
+		return false
+	}
+	userUID := resource.GetRequestSingleHeader(ctx, constant.HeaderUserUIDKey)
+	if userUID == "" {
+		return false
+	}
+	pinKey := fmt.Sprintf("db_pin_user:%s:openfga", userUID)
+	return !errors.Is(c.redisClient.Get(ctx, pinKey).Err(), redis.Nil)
+}
+
 // ListPermissions lists all objects of a type that the current user has a role for.
+// Uses StreamedListObjects to avoid the 1000 result limit of the regular ListObjects API.
 func (c *ACLClient) ListPermissions(ctx context.Context, objectType string, role string, isPublic bool) ([]uuid.UUID, error) {
 	userType := resource.GetRequestSingleHeader(ctx, constant.HeaderAuthTypeKey)
 	userUIDStr := ""
@@ -581,12 +601,24 @@ func (c *ACLClient) ListPermissions(ctx context.Context, objectType string, role
 		return nil, fmt.Errorf("getting authorization model: %w", err)
 	}
 
-	listObjectsResult, err := c.getClient(ctx, ReadMode).ListObjects(ctx, &openfga.ListObjectsRequest{
+	// Determine consistency mode: use HIGHER_CONSISTENCY when user is pinned for read-after-write consistency.
+	// This ensures that after a permission write, subsequent reads see the updated data immediately
+	// rather than potentially stale cached results from OpenFGA's query cache.
+	consistency := openfga.ConsistencyPreference_MINIMIZE_LATENCY
+	if c.IsUserPinned(ctx) {
+		consistency = openfga.ConsistencyPreference_HIGHER_CONSISTENCY
+	}
+
+	// Use StreamedListObjects to avoid the 1000 result limit of regular ListObjects.
+	// This streams all matching objects without pagination, which is essential when
+	// users have permissions for more than 1000 objects.
+	stream, err := c.getClient(ctx, ReadMode).StreamedListObjects(ctx, &openfga.StreamedListObjectsRequest{
 		StoreId:              c.storeID,
 		AuthorizationModelId: modelID,
 		User:                 fmt.Sprintf("%s:%s", userType, userUIDStr),
 		Relation:             role,
 		Type:                 objectType,
+		Consistency:          consistency,
 	})
 	if err != nil {
 		if statusErr, ok := status.FromError(err); ok {
@@ -594,12 +626,19 @@ func (c *ACLClient) ListPermissions(ctx context.Context, objectType string, role
 				return []uuid.UUID{}, nil
 			}
 		}
-		return nil, err
+		return nil, fmt.Errorf("starting streamed list objects: %w", err)
 	}
 
 	objectUIDs := []uuid.UUID{}
-	for _, object := range listObjectsResult.GetObjects() {
-		objectUIDs = append(objectUIDs, uuid.FromStringOrNil(strings.Split(object, ":")[1]))
+	for {
+		resp, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("receiving from stream: %w", err)
+		}
+		objectUIDs = append(objectUIDs, uuid.FromStringOrNil(strings.Split(resp.GetObject(), ":")[1]))
 	}
 
 	return objectUIDs, nil
