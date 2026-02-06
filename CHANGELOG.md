@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.11.0-alpha](https://github.com/instill-ai/x/compare/v0.10.1-alpha...v0.11.0-alpha) (2026-02-06)
+
+
+### Features
+
+* **acl:** add shared ACL client package with permission caching ([#77](https://github.com/instill-ai/x/issues/77)) ([bea4f72](https://github.com/instill-ai/x/commit/bea4f728b22c6b33052b6fba131e170179e1c1d7))
+* **acl:** improve permission caching with model ID caching and read-after-write consistency ([#79](https://github.com/instill-ai/x/issues/79)) ([74b22dd](https://github.com/instill-ai/x/commit/74b22dd4e0e822044c45ebb964edc6c51f7ff8a9))
+* **acl:** use StreamedListObjects and add read-after-write consistency support ([575530f](https://github.com/instill-ai/x/commit/575530f6c2aa71acc00c7d46ca1eed32769380fb))
+* **errors:** add ErrNeedUpgradePlan error for plan upgrade prompts ([#73](https://github.com/instill-ai/x/issues/73)) ([7bbce9c](https://github.com/instill-ai/x/commit/7bbce9cffbcc0d4c297cccd28924b5aececa550d))
+* **file:** add SupportsFileType function for type validation ([#72](https://github.com/instill-ai/x/issues/72)) ([686e098](https://github.com/instill-ai/x/commit/686e0983cf51816b4cae3fb58a41e537688117e2))
+* **file:** centralize file type detection and conversion utilities ([#70](https://github.com/instill-ai/x/issues/70)) ([7db770c](https://github.com/instill-ai/x/commit/7db770caec145685b75f231e74d9598ed3245de5))
+* **file:** update file conversion logic to mark text-based formats as Gemini-native ([#81](https://github.com/instill-ai/x/issues/81)) ([09e1680](https://github.com/instill-ai/x/commit/09e1680f104d9128ebbe36dc1dd68db474ebfb8f))
+
+
+### Bug Fixes
+
+* **acl:** skip local cache for pinned users to ensure read-after-write consistency ([#80](https://github.com/instill-ai/x/issues/80)) ([8018014](https://github.com/instill-ai/x/commit/80180146fe693ee817dd6261f936aaeaf1b374b7))
+* **file:** align file type conversion with Gemini-native formats ([#74](https://github.com/instill-ai/x/issues/74)) ([a2f91c8](https://github.com/instill-ai/x/commit/a2f91c8735f57e0bcdf41ed6d5553196f6ae4385))
+
+
+### Miscellaneous
+
+* **deps:** bump golang.org/x/crypto from 0.39.0 to 0.45.0 ([#71](https://github.com/instill-ai/x/issues/71)) ([76282d8](https://github.com/instill-ai/x/commit/76282d866c386d60592e3bca3ce5339e8dc10009))
+* **error:** add repository-to-domain error method ([#68](https://github.com/instill-ai/x/issues/68)) ([6d7061c](https://github.com/instill-ai/x/commit/6d7061cca7820fa72400f31d59da526395ab0cc2))
+
+
+### Refactor
+
+* **proto:** update imports for flattened protobuf package structure ([#75](https://github.com/instill-ai/x/issues/75)) ([5221537](https://github.com/instill-ai/x/commit/5221537d0a1d162a9d4652e7464a605b3b9a0849))
+
 ## [0.10.1-alpha](https://github.com/instill-ai/x/compare/v0.10.0-alpha...v0.10.1-alpha) (2025-10-12)
 
 
