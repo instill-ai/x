@@ -20,6 +20,8 @@ func FileTypeToMimeType(fileType artifactpb.File_Type) string {
 		return "text/html"
 	case artifactpb.File_TYPE_CSV:
 		return "text/csv"
+	case artifactpb.File_TYPE_JSON:
+		return "application/json"
 
 	// Container-based document types
 	case artifactpb.File_TYPE_PDF:
@@ -56,6 +58,8 @@ func FileTypeToMimeType(fileType artifactpb.File_Type) string {
 		return "image/heif"
 	case artifactpb.File_TYPE_AVIF:
 		return "image/avif"
+	case artifactpb.File_TYPE_SVG:
+		return "image/svg+xml"
 
 	// Audio types
 	case artifactpb.File_TYPE_MP3:
@@ -131,6 +135,8 @@ func DetermineFileType(contentType, fileName string) artifactpb.File_Type {
 		return artifactpb.File_TYPE_TEXT
 	case strings.Contains(contentType, "text/markdown"):
 		return artifactpb.File_TYPE_MARKDOWN
+	case strings.Contains(contentType, "application/json"):
+		return artifactpb.File_TYPE_JSON
 
 	// Images
 	case strings.Contains(contentType, "image/png"):
@@ -151,6 +157,8 @@ func DetermineFileType(contentType, fileName string) artifactpb.File_Type {
 		return artifactpb.File_TYPE_HEIF
 	case strings.Contains(contentType, "image/avif"):
 		return artifactpb.File_TYPE_AVIF
+	case strings.Contains(contentType, "image/svg+xml"):
+		return artifactpb.File_TYPE_SVG
 
 	// Audio
 	case strings.Contains(contentType, "audio/mpeg"):
@@ -217,6 +225,8 @@ func DetermineFileType(contentType, fileName string) artifactpb.File_Type {
 		return artifactpb.File_TYPE_TEXT
 	case ".md", ".markdown":
 		return artifactpb.File_TYPE_MARKDOWN
+	case ".json":
+		return artifactpb.File_TYPE_JSON
 
 	// Images
 	case ".png":
@@ -237,6 +247,8 @@ func DetermineFileType(contentType, fileName string) artifactpb.File_Type {
 		return artifactpb.File_TYPE_HEIF
 	case ".avif":
 		return artifactpb.File_TYPE_AVIF
+	case ".svg":
+		return artifactpb.File_TYPE_SVG
 
 	// Audio
 	case ".mp3":
@@ -294,7 +306,8 @@ func FileTypeToMediaType(fileType artifactpb.File_Type) artifactpb.File_FileMedi
 		artifactpb.File_TYPE_CSV,
 		artifactpb.File_TYPE_HTML,
 		artifactpb.File_TYPE_TEXT,
-		artifactpb.File_TYPE_MARKDOWN:
+		artifactpb.File_TYPE_MARKDOWN,
+		artifactpb.File_TYPE_JSON:
 		return artifactpb.File_FILE_MEDIA_TYPE_DOCUMENT
 
 	// Image types
@@ -306,7 +319,8 @@ func FileTypeToMediaType(fileType artifactpb.File_Type) artifactpb.File_FileMedi
 		artifactpb.File_TYPE_BMP,
 		artifactpb.File_TYPE_HEIC,
 		artifactpb.File_TYPE_HEIF,
-		artifactpb.File_TYPE_AVIF:
+		artifactpb.File_TYPE_AVIF,
+		artifactpb.File_TYPE_SVG:
 		return artifactpb.File_FILE_MEDIA_TYPE_IMAGE
 
 	// Audio types
@@ -401,6 +415,8 @@ func FormatToFileType(format string) artifactpb.File_Type {
 		return artifactpb.File_TYPE_TEXT
 	case "md", "markdown":
 		return artifactpb.File_TYPE_MARKDOWN
+	case "json":
+		return artifactpb.File_TYPE_JSON
 
 	// Images
 	case "png":
@@ -421,6 +437,8 @@ func FormatToFileType(format string) artifactpb.File_Type {
 		return artifactpb.File_TYPE_HEIF
 	case "avif":
 		return artifactpb.File_TYPE_AVIF
+	case "svg":
+		return artifactpb.File_TYPE_SVG
 
 	// Audio
 	case "mp3":
@@ -493,6 +511,8 @@ func ConvertFileTypeString(dbType string) artifactpb.File_Type {
 		return artifactpb.File_TYPE_TEXT
 	case "TYPE_MARKDOWN":
 		return artifactpb.File_TYPE_MARKDOWN
+	case "TYPE_JSON":
+		return artifactpb.File_TYPE_JSON
 
 	// Images
 	case "TYPE_PNG":
@@ -513,6 +533,8 @@ func ConvertFileTypeString(dbType string) artifactpb.File_Type {
 		return artifactpb.File_TYPE_HEIF
 	case "TYPE_AVIF":
 		return artifactpb.File_TYPE_AVIF
+	case "TYPE_SVG":
+		return artifactpb.File_TYPE_SVG
 
 	// Audio
 	case "TYPE_MP3":
@@ -581,7 +603,8 @@ func IsFileTypeSupported(fileType artifactpb.File_Type) bool {
 		artifactpb.File_TYPE_HTML,
 		artifactpb.File_TYPE_TEXT,
 		artifactpb.File_TYPE_MARKDOWN,
-		artifactpb.File_TYPE_CSV:
+		artifactpb.File_TYPE_CSV,
+		artifactpb.File_TYPE_JSON:
 		return true
 
 	// Images - supported by pipeline-backend/pkg/data/image.go
@@ -593,7 +616,8 @@ func IsFileTypeSupported(fileType artifactpb.File_Type) bool {
 		artifactpb.File_TYPE_GIF,
 		artifactpb.File_TYPE_BMP,
 		artifactpb.File_TYPE_TIFF,
-		artifactpb.File_TYPE_AVIF:
+		artifactpb.File_TYPE_AVIF,
+		artifactpb.File_TYPE_SVG:
 		return true
 
 	// Audio - supported by pipeline-backend/pkg/data/audio.go
@@ -641,7 +665,8 @@ func NeedFileTypeConversion(fileType artifactpb.File_Type) (need bool, targetFor
 	case artifactpb.File_TYPE_GIF,
 		artifactpb.File_TYPE_BMP,
 		artifactpb.File_TYPE_TIFF,
-		artifactpb.File_TYPE_AVIF:
+		artifactpb.File_TYPE_AVIF,
+		artifactpb.File_TYPE_SVG:
 		return true, "png", artifactpb.File_TYPE_PNG
 
 	// Gemini-native audio formats - no conversion needed
@@ -680,7 +705,8 @@ func NeedFileTypeConversion(fileType artifactpb.File_Type) (need bool, targetFor
 		artifactpb.File_TYPE_TEXT,
 		artifactpb.File_TYPE_MARKDOWN,
 		artifactpb.File_TYPE_CSV,
-		artifactpb.File_TYPE_HTML:
+		artifactpb.File_TYPE_HTML,
+		artifactpb.File_TYPE_JSON:
 		return false, "", artifactpb.File_TYPE_UNSPECIFIED
 
 	// Convertible document formats - convert to PDF
@@ -794,6 +820,8 @@ func FileTypeToExtension(fileType artifactpb.File_Type) string {
 		return "txt"
 	case artifactpb.File_TYPE_MARKDOWN:
 		return "md"
+	case artifactpb.File_TYPE_JSON:
+		return "json"
 
 	// Images
 	case artifactpb.File_TYPE_PNG:
@@ -814,6 +842,8 @@ func FileTypeToExtension(fileType artifactpb.File_Type) string {
 		return "heif"
 	case artifactpb.File_TYPE_AVIF:
 		return "avif"
+	case artifactpb.File_TYPE_SVG:
+		return "svg"
 
 	// Audio
 	case artifactpb.File_TYPE_MP3:

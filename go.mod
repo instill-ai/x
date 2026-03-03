@@ -10,7 +10,7 @@ require (
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.1
 	github.com/iancoleman/strcase v0.3.0
-	github.com/instill-ai/protogen-go v0.3.3-alpha.0.20260118003146-5bd5d4129f45
+	github.com/instill-ai/protogen-go v0.3.3-alpha.0.20260303010248-9dda50abe5bb
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/minio/minio-go/v7 v7.0.92
 	github.com/openfga/api/proto v0.0.0-20240723155248-7e5be7b65c27
