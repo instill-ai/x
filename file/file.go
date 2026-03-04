@@ -351,6 +351,50 @@ func FileTypeToMediaType(fileType artifactpb.File_Type) artifactpb.File_FileMedi
 	}
 }
 
+// FileCategory represents a broad file category for classification and pricing.
+type FileCategory string
+
+const (
+	FileCategoryDocument FileCategory = "document"
+	FileCategoryImage    FileCategory = "image"
+	FileCategoryAudio    FileCategory = "audio"
+	FileCategoryVideo    FileCategory = "video"
+)
+
+// FileTypeCategory returns the FileCategory for a given File_Type based on
+// its media type. Returns "" for unrecognized types.
+func FileTypeCategory(ft artifactpb.File_Type) FileCategory {
+	switch FileTypeToMediaType(ft) {
+	case artifactpb.File_FILE_MEDIA_TYPE_DOCUMENT:
+		return FileCategoryDocument
+	case artifactpb.File_FILE_MEDIA_TYPE_IMAGE:
+		return FileCategoryImage
+	case artifactpb.File_FILE_MEDIA_TYPE_AUDIO:
+		return FileCategoryAudio
+	case artifactpb.File_FILE_MEDIA_TYPE_VIDEO:
+		return FileCategoryVideo
+	default:
+		return ""
+	}
+}
+
+// IsNonPaginatedDocument returns true for text-based document formats that have
+// no inherent page structure (TXT, Markdown, HTML, CSV, JSON). These files are
+// processed as a single chunk rather than paginated, so page count metadata is
+// unavailable and should default to 1 for pricing purposes.
+func IsNonPaginatedDocument(ft artifactpb.File_Type) bool {
+	switch ft {
+	case artifactpb.File_TYPE_TEXT,
+		artifactpb.File_TYPE_MARKDOWN,
+		artifactpb.File_TYPE_HTML,
+		artifactpb.File_TYPE_CSV,
+		artifactpb.File_TYPE_JSON:
+		return true
+	default:
+		return false
+	}
+}
+
 // GetFileMediaType determines the FileMediaType from FileType and MIME type with fallback.
 // First tries to get media type from FileType, then falls back to MIME type patterns.
 func GetFileMediaType(fileType artifactpb.File_Type, mimeType string) artifactpb.File_FileMediaType {
