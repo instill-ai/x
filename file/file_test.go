@@ -243,7 +243,7 @@ func TestNeedsFileTypeConversion(t *testing.T) {
 		{"DOCX to PDF", artifactpb.File_TYPE_DOCX, true, "pdf", artifactpb.File_TYPE_PDF},
 		{"DOC to PDF", artifactpb.File_TYPE_DOC, true, "pdf", artifactpb.File_TYPE_PDF},
 		{"PPTX to PDF", artifactpb.File_TYPE_PPTX, true, "pdf", artifactpb.File_TYPE_PDF},
-		{"HTML to PDF", artifactpb.File_TYPE_HTML, true, "pdf", artifactpb.File_TYPE_PDF},
+		{"HTML no conversion", artifactpb.File_TYPE_HTML, false, "", artifactpb.File_TYPE_UNSPECIFIED},
 
 		// Unknown
 		{"UNSPECIFIED", artifactpb.File_TYPE_UNSPECIFIED, false, "", artifactpb.File_TYPE_UNSPECIFIED},
