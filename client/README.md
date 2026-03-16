@@ -46,7 +46,7 @@ Creates a complete gRPC client configuration with:
 - **Metadata propagation interceptors**: Automatic context metadata handling
 - **TLS credentials**: Automatic certificate-based security
 - **OpenTelemetry integration**: Built-in tracing and metrics with filtering
-- **Message size limits**: Configurable payload size limits (256MB default)
+- **Message size limits**: Configurable payload size limits (2 GB default, matching Gemini's max file-upload size)
 
 ```go
 // Basic usage
