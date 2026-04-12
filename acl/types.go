@@ -63,3 +63,12 @@ const (
 
 // PermissionCachePrefix is the Redis key prefix for permission cache entries.
 const PermissionCachePrefix = "acl:perm:"
+
+type contextKeyType string
+
+// ContextKeyForceHigherConsistency is a context key that, when set to true,
+// forces HIGHER_CONSISTENCY in OpenFGA Check requests regardless of whether
+// the user is pinned. This is used when a resource's state recently changed
+// (e.g., visibility toggle) and affects ALL callers — including anonymous
+// visitors who have no persistent user UID to pin.
+const ContextKeyForceHigherConsistency contextKeyType = "acl:force_higher_consistency"
