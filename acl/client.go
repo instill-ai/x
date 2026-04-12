@@ -434,23 +434,26 @@ func (c *ACLClient) CheckPermission(ctx context.Context, objectType string, obje
 		return false, fmt.Errorf("%w: userUID is empty in check permission", errorsx.ErrUnauthenticated)
 	}
 
-	// Check if user is pinned (recently had permissions changed)
-	// If so, we need to use HIGHER_CONSISTENCY to bypass OpenFGA's check query cache
-	// and skip the local cache to ensure fresh permission data after grant/revoke
+	// Determine whether to bypass caches and use HIGHER_CONSISTENCY.
+	// Two triggers: (1) caller set ContextKeyForceHigherConsistency (object-level,
+	// e.g. after a visibility toggle that affects all users including anonymous),
+	// or (2) user is pinned via Redis (per-user read-after-write).
 	var consistency openfga.ConsistencyPreference
-	isPinned := false
-	if c.redisClient != nil {
+	forceConsistency := false
+	if forceHC, ok := ctx.Value(ContextKeyForceHigherConsistency).(bool); ok && forceHC {
+		forceConsistency = true
+		consistency = openfga.ConsistencyPreference_HIGHER_CONSISTENCY
+	}
+	if !forceConsistency && c.redisClient != nil {
 		pinKey := fmt.Sprintf("db_pin_user:%s:openfga", userUID)
 		if !errors.Is(c.redisClient.Get(ctx, pinKey).Err(), redis.Nil) {
-			isPinned = true
+			forceConsistency = true
 			consistency = openfga.ConsistencyPreference_HIGHER_CONSISTENCY
 		}
 	}
 
-	// Check cache first if enabled, but skip cache if user is pinned
-	// (pinned users had recent permission changes and need fresh data)
 	cacheKey := permissionCacheKey(userType, userUID, objectType, objectUID.String(), role)
-	if c.cacheEnabled && c.redisClient != nil && !isPinned {
+	if c.cacheEnabled && c.redisClient != nil && !forceConsistency {
 		cachedResult, err := c.redisClient.Get(ctx, cacheKey).Result()
 		if err == nil {
 			// Cache hit
@@ -480,12 +483,12 @@ func (c *ACLClient) CheckPermission(ctx context.Context, objectType string, obje
 		zap.String("role", role),
 		zap.String("modelID", modelID),
 		zap.String("storeID", c.storeID),
-		zap.Bool("isPinned", isPinned),
+		zap.Bool("forceConsistency", forceConsistency),
 		zap.String("consistency", consistency.String()),
 	)
 
 	// Create a CheckRequest to verify the user's permission
-	data, err := c.getClient(ctx, ReadMode).Check(ctx, &openfga.CheckRequest{
+	checkReq := &openfga.CheckRequest{
 		StoreId:              c.storeID,
 		AuthorizationModelId: modelID,
 		TupleKey: &openfga.CheckRequestTupleKey{
@@ -494,15 +497,14 @@ func (c *ACLClient) CheckPermission(ctx context.Context, objectType string, obje
 			Object:   fmt.Sprintf("%s:%s", objectType, objectUID.String()),
 		},
 		Consistency: consistency,
-	})
+	}
+	data, err := c.getClient(ctx, ReadMode).Check(ctx, checkReq)
 	if err != nil {
 		log.Error("CheckPermission failed", zap.Error(err))
 		return false, err
 	}
 
-	// Cache the result if caching is enabled and user is not pinned
-	// Don't cache results for pinned users since their permissions are in flux
-	if c.cacheEnabled && c.redisClient != nil && !isPinned {
+	if c.cacheEnabled && c.redisClient != nil && !forceConsistency {
 		cacheValue := "0"
 		if data.Allowed {
 			cacheValue = "1"
@@ -512,7 +514,7 @@ func (c *ACLClient) CheckPermission(ctx context.Context, objectType string, obje
 		}
 	}
 
-	log.Debug("CheckPermission result", zap.Bool("allowed", data.Allowed), zap.Bool("isPinned", isPinned))
+	log.Debug("CheckPermission result", zap.Bool("allowed", data.Allowed), zap.Bool("forceConsistency", forceConsistency))
 
 	return data.Allowed, nil
 }
@@ -601,11 +603,12 @@ func (c *ACLClient) ListPermissions(ctx context.Context, objectType string, role
 		return nil, fmt.Errorf("getting authorization model: %w", err)
 	}
 
-	// Determine consistency mode: use HIGHER_CONSISTENCY when user is pinned for read-after-write consistency.
-	// This ensures that after a permission write, subsequent reads see the updated data immediately
-	// rather than potentially stale cached results from OpenFGA's query cache.
+	// Use HIGHER_CONSISTENCY when the caller forced it via context (object-level
+	// visibility change) or when the user is pinned (per-user read-after-write).
 	consistency := openfga.ConsistencyPreference_MINIMIZE_LATENCY
-	if c.IsUserPinned(ctx) {
+	if forceHC, ok := ctx.Value(ContextKeyForceHigherConsistency).(bool); ok && forceHC {
+		consistency = openfga.ConsistencyPreference_HIGHER_CONSISTENCY
+	} else if c.IsUserPinned(ctx) {
 		consistency = openfga.ConsistencyPreference_HIGHER_CONSISTENCY
 	}
 
