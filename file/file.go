@@ -753,13 +753,19 @@ func NeedFileTypeConversion(fileType artifactpb.File_Type) (need bool, targetFor
 		artifactpb.File_TYPE_JSON:
 		return false, "", artifactpb.File_TYPE_UNSPECIFIED
 
+	// XLSX - processed directly by excelize, no conversion needed
+	case artifactpb.File_TYPE_XLSX:
+		return false, "", artifactpb.File_TYPE_UNSPECIFIED
+
+	// XLS - convert to XLSX (not PDF) for structured parsing with excelize
+	case artifactpb.File_TYPE_XLS:
+		return true, "xlsx", artifactpb.File_TYPE_XLSX
+
 	// Convertible document formats - convert to PDF
 	case artifactpb.File_TYPE_DOC,
 		artifactpb.File_TYPE_DOCX,
 		artifactpb.File_TYPE_PPT,
-		artifactpb.File_TYPE_PPTX,
-		artifactpb.File_TYPE_XLS,
-		artifactpb.File_TYPE_XLSX:
+		artifactpb.File_TYPE_PPTX:
 		return true, "pdf", artifactpb.File_TYPE_PDF
 
 	default:
@@ -819,6 +825,10 @@ func GetConvertedFileTypeInfo(fileType artifactpb.File_Type) (artifactpb.Convert
 	// Gemini-native document format
 	case artifactpb.File_TYPE_PDF:
 		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_DOCUMENT, "pdf", "application/pdf"
+
+	// Spreadsheets — standardize to XLSX (excelize handles directly)
+	case artifactpb.File_TYPE_XLSX, artifactpb.File_TYPE_XLS:
+		return artifactpb.ConvertedFileType_CONVERTED_FILE_TYPE_DOCUMENT, "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 	}
 
 	// For non-native formats, fall back to media type based logic
