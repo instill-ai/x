@@ -875,11 +875,19 @@ func (c *ACLClient) CheckShareLinkPermission(ctx context.Context, shareToken str
 	return data.Allowed, nil
 }
 
-// CheckRequesterPermission validates that the authenticated user can make
-// requests on behalf of the resource identified by the requester UID.
-// This is used for organization impersonation.
+// CheckRequesterPermission validates namespace delegation: when a user
+// (Instill-User-Uid) operates within an organization workspace, the frontend
+// sets Instill-Requester-Uid to the org UID. This check ensures the
+// authenticated user is a member of that organization.
+//
+// Visitors skip this check: they have no namespace membership to validate.
+// Their per-resource access is gated by CheckPermission using the
+// visitor:{uid} FGA identity.
 func (c *ACLClient) CheckRequesterPermission(ctx context.Context) error {
 	authType := resource.GetRequestSingleHeader(ctx, constant.HeaderAuthTypeKey)
+	if authType == "visitor" {
+		return nil
+	}
 	if authType != "user" {
 		return fmt.Errorf("%w: unauthenticated user", errorsx.ErrUnauthenticated)
 	}

@@ -1,0 +1,1444 @@
+package acl
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/gofrs/uuid"
+	"github.com/redis/go-redis/v9"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+
+	openfga "github.com/openfga/api/proto/openfga/v1"
+
+	"github.com/instill-ai/x/constant"
+	errorsx "github.com/instill-ai/x/errors"
+)
+
+// --- Test fixtures ---
+
+var (
+	testUserUID    = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+	testVisitorUID = "b6e1f5c3-7a2d-4e89-9f01-abc123def456"
+	testOrgUID     = "c7d8e9f0-1a2b-3c4d-5e6f-fedcba987654"
+	testObjectUID  = uuid.Must(uuid.FromString("d0e1f2a3-b4c5-6789-0abc-def123456789"))
+	testModelID    = "model-01HXYZ"
+	testStoreID    = "store-01HXYZ"
+)
+
+// --- Mock OpenFGA client ---
+
+type mockFGA struct {
+	checkFn               func(ctx context.Context, req *openfga.CheckRequest) (*openfga.CheckResponse, error)
+	readFn                func(ctx context.Context, req *openfga.ReadRequest) (*openfga.ReadResponse, error)
+	writeFn               func(ctx context.Context, req *openfga.WriteRequest) (*openfga.WriteResponse, error)
+	streamedListObjectsFn func(ctx context.Context, req *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error)
+}
+
+func (m *mockFGA) Check(ctx context.Context, in *openfga.CheckRequest, _ ...grpc.CallOption) (*openfga.CheckResponse, error) {
+	if m.checkFn != nil {
+		return m.checkFn(ctx, in)
+	}
+	return &openfga.CheckResponse{Allowed: false}, nil
+}
+
+func (m *mockFGA) Read(ctx context.Context, in *openfga.ReadRequest, _ ...grpc.CallOption) (*openfga.ReadResponse, error) {
+	if m.readFn != nil {
+		return m.readFn(ctx, in)
+	}
+	return &openfga.ReadResponse{}, nil
+}
+
+func (m *mockFGA) Write(ctx context.Context, in *openfga.WriteRequest, _ ...grpc.CallOption) (*openfga.WriteResponse, error) {
+	if m.writeFn != nil {
+		return m.writeFn(ctx, in)
+	}
+	return &openfga.WriteResponse{}, nil
+}
+
+func (m *mockFGA) StreamedListObjects(ctx context.Context, in *openfga.StreamedListObjectsRequest, _ ...grpc.CallOption) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+	if m.streamedListObjectsFn != nil {
+		return m.streamedListObjectsFn(ctx, in)
+	}
+	return &mockStream{items: nil}, nil
+}
+
+func (m *mockFGA) Expand(context.Context, *openfga.ExpandRequest, ...grpc.CallOption) (*openfga.ExpandResponse, error) {
+	panic("not used")
+}
+func (m *mockFGA) ReadAuthorizationModels(context.Context, *openfga.ReadAuthorizationModelsRequest, ...grpc.CallOption) (*openfga.ReadAuthorizationModelsResponse, error) {
+	panic("not used")
+}
+func (m *mockFGA) ReadAuthorizationModel(context.Context, *openfga.ReadAuthorizationModelRequest, ...grpc.CallOption) (*openfga.ReadAuthorizationModelResponse, error) {
+	panic("not used")
+}
+func (m *mockFGA) WriteAuthorizationModel(context.Context, *openfga.WriteAuthorizationModelRequest, ...grpc.CallOption) (*openfga.WriteAuthorizationModelResponse, error) {
+	panic("not used")
+}
+func (m *mockFGA) WriteAssertions(context.Context, *openfga.WriteAssertionsRequest, ...grpc.CallOption) (*openfga.WriteAssertionsResponse, error) {
+	panic("not used")
+}
+func (m *mockFGA) ReadAssertions(context.Context, *openfga.ReadAssertionsRequest, ...grpc.CallOption) (*openfga.ReadAssertionsResponse, error) {
+	panic("not used")
+}
+func (m *mockFGA) ReadChanges(context.Context, *openfga.ReadChangesRequest, ...grpc.CallOption) (*openfga.ReadChangesResponse, error) {
+	panic("not used")
+}
+func (m *mockFGA) CreateStore(context.Context, *openfga.CreateStoreRequest, ...grpc.CallOption) (*openfga.CreateStoreResponse, error) {
+	panic("not used")
+}
+func (m *mockFGA) UpdateStore(context.Context, *openfga.UpdateStoreRequest, ...grpc.CallOption) (*openfga.UpdateStoreResponse, error) {
+	panic("not used")
+}
+func (m *mockFGA) DeleteStore(context.Context, *openfga.DeleteStoreRequest, ...grpc.CallOption) (*openfga.DeleteStoreResponse, error) {
+	panic("not used")
+}
+func (m *mockFGA) GetStore(context.Context, *openfga.GetStoreRequest, ...grpc.CallOption) (*openfga.GetStoreResponse, error) {
+	panic("not used")
+}
+func (m *mockFGA) ListStores(context.Context, *openfga.ListStoresRequest, ...grpc.CallOption) (*openfga.ListStoresResponse, error) {
+	panic("not used")
+}
+func (m *mockFGA) ListObjects(context.Context, *openfga.ListObjectsRequest, ...grpc.CallOption) (*openfga.ListObjectsResponse, error) {
+	panic("not used")
+}
+func (m *mockFGA) ListUsers(context.Context, *openfga.ListUsersRequest, ...grpc.CallOption) (*openfga.ListUsersResponse, error) {
+	panic("not used")
+}
+
+// --- Mock stream for ListPermissions ---
+
+type mockStream struct {
+	grpc.ClientStream
+	items []*openfga.StreamedListObjectsResponse
+	pos   int
+}
+
+func (s *mockStream) Recv() (*openfga.StreamedListObjectsResponse, error) {
+	if s.pos >= len(s.items) {
+		return nil, io.EOF
+	}
+	resp := s.items[s.pos]
+	s.pos++
+	return resp, nil
+}
+
+type mockErrorStream struct {
+	grpc.ClientStream
+	items    []*openfga.StreamedListObjectsResponse
+	pos      int
+	errAfter int
+}
+
+func (s *mockErrorStream) Recv() (*openfga.StreamedListObjectsResponse, error) {
+	if s.pos >= s.errAfter {
+		return nil, fmt.Errorf("stream interrupted")
+	}
+	if s.pos >= len(s.items) {
+		return nil, io.EOF
+	}
+	resp := s.items[s.pos]
+	s.pos++
+	return resp, nil
+}
+
+// --- Helpers ---
+
+func ctxWithHeaders(headers map[string]string) context.Context {
+	md := metadata.New(headers)
+	return metadata.NewIncomingContext(context.Background(), md)
+}
+
+func newTestClient(fga *mockFGA) *ACLClient {
+	return &ACLClient{
+		writeClient: fga,
+		readClient:  fga,
+		storeID:     testStoreID,
+		modelID:     testModelID,
+	}
+}
+
+func newTestClientWithCache(fga *mockFGA) (*ACLClient, *miniredis.Miniredis) {
+	mr := miniredis.RunT(&testing.T{})
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	return &ACLClient{
+		writeClient:  fga,
+		readClient:   fga,
+		redisClient:  rc,
+		storeID:      testStoreID,
+		modelID:      testModelID,
+		cacheEnabled: true,
+		cacheTTL:     60 * time.Second,
+	}, mr
+}
+
+func userCtx(userUID string) context.Context {
+	return ctxWithHeaders(map[string]string{
+		constant.HeaderAuthTypeKey: "user",
+		constant.HeaderUserUIDKey:  userUID,
+	})
+}
+
+func visitorCtx(visitorUID string) context.Context {
+	return ctxWithHeaders(map[string]string{
+		constant.HeaderAuthTypeKey:   "visitor",
+		constant.HeaderVisitorUIDKey: visitorUID,
+	})
+}
+
+func orgDelegationCtx(userUID, orgUID string) context.Context {
+	return ctxWithHeaders(map[string]string{
+		constant.HeaderAuthTypeKey:     "user",
+		constant.HeaderUserUIDKey:      userUID,
+		constant.HeaderRequesterUIDKey: orgUID,
+	})
+}
+
+// ============================================================
+// CheckRequesterPermission — namespace delegation
+// ============================================================
+
+func TestCheckRequesterPermission_VisitorSkipsCheck(t *testing.T) {
+	c := newTestClient(&mockFGA{})
+	ctx := visitorCtx(testVisitorUID)
+
+	if err := c.CheckRequesterPermission(ctx); err != nil {
+		t.Errorf("visitors should bypass requester check, got: %v", err)
+	}
+}
+
+func TestCheckRequesterPermission_UnauthenticatedRejected(t *testing.T) {
+	c := newTestClient(&mockFGA{})
+	ctx := ctxWithHeaders(map[string]string{})
+
+	err := c.CheckRequesterPermission(ctx)
+	if err == nil {
+		t.Fatal("unauthenticated request should be rejected")
+	}
+	if !errors.Is(err, errorsx.ErrUnauthenticated) {
+		t.Errorf("expected ErrUnauthenticated, got: %v", err)
+	}
+}
+
+func TestCheckRequesterPermission_UserInOwnNamespace(t *testing.T) {
+	c := newTestClient(&mockFGA{})
+	ctx := userCtx(testUserUID)
+
+	if err := c.CheckRequesterPermission(ctx); err != nil {
+		t.Errorf("user in own namespace (no requester) should pass, got: %v", err)
+	}
+}
+
+func TestCheckRequesterPermission_UserExplicitSelfRequester(t *testing.T) {
+	c := newTestClient(&mockFGA{})
+	ctx := orgDelegationCtx(testUserUID, testUserUID)
+
+	if err := c.CheckRequesterPermission(ctx); err != nil {
+		t.Errorf("user with requester=self should pass, got: %v", err)
+	}
+}
+
+func TestCheckRequesterPermission_OrgMemberAllowed(t *testing.T) {
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, req *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			if req.TupleKey.User != fmt.Sprintf("user:%s", testUserUID) {
+				t.Errorf("FGA should check with user identity, got: %s", req.TupleKey.User)
+			}
+			if req.TupleKey.Relation != "member" {
+				t.Errorf("FGA should check member relation, got: %s", req.TupleKey.Relation)
+			}
+			return &openfga.CheckResponse{Allowed: true}, nil
+		},
+	}
+	c := newTestClient(fga)
+	ctx := orgDelegationCtx(testUserUID, testOrgUID)
+
+	if err := c.CheckRequesterPermission(ctx); err != nil {
+		t.Errorf("org member should be allowed, got: %v", err)
+	}
+}
+
+func TestCheckRequesterPermission_NonMemberDenied(t *testing.T) {
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, _ *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			return &openfga.CheckResponse{Allowed: false}, nil
+		},
+	}
+	c := newTestClient(fga)
+	ctx := orgDelegationCtx(testUserUID, testOrgUID)
+
+	err := c.CheckRequesterPermission(ctx)
+	if err == nil {
+		t.Fatal("non-member should be denied")
+	}
+	if !errors.Is(err, errorsx.ErrPermissionDenied) {
+		t.Errorf("expected ErrPermissionDenied, got: %v", err)
+	}
+}
+
+func TestCheckRequesterPermission_FGAErrorPropagated(t *testing.T) {
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, _ *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			return nil, fmt.Errorf("openfga unavailable")
+		},
+	}
+	c := newTestClient(fga)
+	ctx := orgDelegationCtx(testUserUID, testOrgUID)
+
+	err := c.CheckRequesterPermission(ctx)
+	if err == nil {
+		t.Fatal("FGA error should propagate")
+	}
+}
+
+// ============================================================
+// CheckPermission — per-resource access check
+// ============================================================
+
+func TestCheckPermission_UserGranted(t *testing.T) {
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, req *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			if req.TupleKey.User != fmt.Sprintf("user:%s", testUserUID) {
+				t.Errorf("expected user identity, got: %s", req.TupleKey.User)
+			}
+			if req.TupleKey.Relation != "reader" {
+				t.Errorf("expected reader relation, got: %s", req.TupleKey.Relation)
+			}
+			if req.TupleKey.Object != fmt.Sprintf("knowledgebase:%s", testObjectUID) {
+				t.Errorf("expected knowledgebase object, got: %s", req.TupleKey.Object)
+			}
+			return &openfga.CheckResponse{Allowed: true}, nil
+		},
+	}
+	c := newTestClient(fga)
+	ctx := userCtx(testUserUID)
+
+	granted, err := c.CheckPermission(ctx, "knowledgebase", testObjectUID, "reader")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !granted {
+		t.Error("user with permission should be granted")
+	}
+}
+
+func TestCheckPermission_UserDenied(t *testing.T) {
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, _ *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			return &openfga.CheckResponse{Allowed: false}, nil
+		},
+	}
+	c := newTestClient(fga)
+	ctx := userCtx(testUserUID)
+
+	granted, err := c.CheckPermission(ctx, "knowledgebase", testObjectUID, "writer")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if granted {
+		t.Error("user without permission should be denied")
+	}
+}
+
+func TestCheckPermission_VisitorUsesVisitorIdentity(t *testing.T) {
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, req *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			expected := fmt.Sprintf("visitor:%s", testVisitorUID)
+			if req.TupleKey.User != expected {
+				t.Errorf("visitor should use visitor:{uid} identity, got: %s", req.TupleKey.User)
+			}
+			return &openfga.CheckResponse{Allowed: true}, nil
+		},
+	}
+	c := newTestClient(fga)
+	ctx := visitorCtx(testVisitorUID)
+
+	granted, err := c.CheckPermission(ctx, "knowledgebase", testObjectUID, "reader")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !granted {
+		t.Error("visitor with public access should be granted")
+	}
+}
+
+func TestCheckPermission_EmptyUIDRejected(t *testing.T) {
+	c := newTestClient(&mockFGA{})
+	ctx := ctxWithHeaders(map[string]string{
+		constant.HeaderAuthTypeKey: "user",
+	})
+
+	_, err := c.CheckPermission(ctx, "knowledgebase", testObjectUID, "reader")
+	if err == nil {
+		t.Fatal("empty UID should be rejected")
+	}
+}
+
+func TestCheckPermission_FGAErrorPropagated(t *testing.T) {
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, _ *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			return nil, fmt.Errorf("connection refused")
+		},
+	}
+	c := newTestClient(fga)
+	ctx := userCtx(testUserUID)
+
+	_, err := c.CheckPermission(ctx, "knowledgebase", testObjectUID, "reader")
+	if err == nil {
+		t.Fatal("FGA error should propagate")
+	}
+}
+
+func TestCheckPermission_CachedPermissionSkipsFGA(t *testing.T) {
+	var fgaCalled bool
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, _ *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			fgaCalled = true
+			return &openfga.CheckResponse{Allowed: true}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	ctx := userCtx(testUserUID)
+
+	// First call should hit FGA and cache the result
+	granted, err := c.CheckPermission(ctx, "knowledgebase", testObjectUID, "reader")
+	if err != nil || !granted {
+		t.Fatalf("first call should succeed: err=%v, granted=%v", err, granted)
+	}
+	if !fgaCalled {
+		t.Fatal("first call should hit FGA")
+	}
+
+	// Second call should use cache without calling FGA
+	fgaCalled = false
+	granted, err = c.CheckPermission(ctx, "knowledgebase", testObjectUID, "reader")
+	if err != nil || !granted {
+		t.Fatalf("cached call should succeed: err=%v, granted=%v", err, granted)
+	}
+	if fgaCalled {
+		t.Error("second call should use cache, not hit FGA again")
+	}
+}
+
+func TestCheckPermission_CachedDenialIsReturned(t *testing.T) {
+	callCount := 0
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, _ *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			callCount++
+			return &openfga.CheckResponse{Allowed: false}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	ctx := userCtx(testUserUID)
+
+	// First call: FGA denies, result is cached
+	granted, _ := c.CheckPermission(ctx, "knowledgebase", testObjectUID, "writer")
+	if granted {
+		t.Fatal("should be denied")
+	}
+
+	// Second call: should return cached denial
+	granted, _ = c.CheckPermission(ctx, "knowledgebase", testObjectUID, "writer")
+	if granted {
+		t.Fatal("cached denial should still deny")
+	}
+	if callCount != 1 {
+		t.Errorf("expected 1 FGA call (cached second time), got %d", callCount)
+	}
+}
+
+func TestCheckPermission_ForceConsistencyBypassesCache(t *testing.T) {
+	fgaCallCount := 0
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, req *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			fgaCallCount++
+			return &openfga.CheckResponse{Allowed: true}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	ctx := userCtx(testUserUID)
+
+	// First call populates cache
+	_, _ = c.CheckPermission(ctx, "knowledgebase", testObjectUID, "reader")
+
+	// Force consistency should bypass cache and hit FGA again
+	ctxForce := context.WithValue(ctx, ContextKeyForceHigherConsistency, true)
+	_, err := c.CheckPermission(ctxForce, "knowledgebase", testObjectUID, "reader")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fgaCallCount != 2 {
+		t.Errorf("force consistency should bypass cache: expected 2 FGA calls, got %d", fgaCallCount)
+	}
+}
+
+func TestCheckPermission_ForceConsistencyAfterVisibilityChange(t *testing.T) {
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, req *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			if req.Consistency != openfga.ConsistencyPreference_HIGHER_CONSISTENCY {
+				t.Error("after a visibility toggle, should use HIGHER_CONSISTENCY to avoid stale cache")
+			}
+			return &openfga.CheckResponse{Allowed: true}, nil
+		},
+	}
+	c := newTestClient(fga)
+	ctx := userCtx(testUserUID)
+	ctx = context.WithValue(ctx, ContextKeyForceHigherConsistency, true)
+
+	_, err := c.CheckPermission(ctx, "knowledgebase", testObjectUID, "reader")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// ============================================================
+// SetOwner — ownership management
+// ============================================================
+
+func TestSetOwner_NewOwner(t *testing.T) {
+	ownerUID := uuid.Must(uuid.FromString(testUserUID))
+	var writeWasCalled bool
+
+	fga := &mockFGA{
+		readFn: func(_ context.Context, _ *openfga.ReadRequest) (*openfga.ReadResponse, error) {
+			return &openfga.ReadResponse{Tuples: []*openfga.Tuple{}}, nil
+		},
+		writeFn: func(_ context.Context, req *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			writeWasCalled = true
+			tuples := req.Writes.TupleKeys
+			if len(tuples) != 1 {
+				t.Fatalf("expected 1 tuple, got %d", len(tuples))
+			}
+			if tuples[0].Relation != "owner" {
+				t.Errorf("expected owner relation, got: %s", tuples[0].Relation)
+			}
+			return &openfga.WriteResponse{}, nil
+		},
+	}
+	c := newTestClient(fga)
+
+	err := c.SetOwner(context.Background(), "pipeline", testObjectUID, "user", ownerUID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !writeWasCalled {
+		t.Error("should write owner tuple when no owner exists")
+	}
+}
+
+func TestSetOwner_AlreadyExists(t *testing.T) {
+	ownerUID := uuid.Must(uuid.FromString(testUserUID))
+
+	fga := &mockFGA{
+		readFn: func(_ context.Context, _ *openfga.ReadRequest) (*openfga.ReadResponse, error) {
+			return &openfga.ReadResponse{
+				Tuples: []*openfga.Tuple{{
+					Key: &openfga.TupleKey{
+						User:     fmt.Sprintf("user:%s", testUserUID),
+						Relation: "owner",
+						Object:   fmt.Sprintf("pipeline:%s", testObjectUID),
+					},
+				}},
+			}, nil
+		},
+		writeFn: func(_ context.Context, _ *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			t.Fatal("should NOT write when owner already exists")
+			return nil, nil
+		},
+	}
+	c := newTestClient(fga)
+
+	err := c.SetOwner(context.Background(), "pipeline", testObjectUID, "user", ownerUID)
+	if err != nil {
+		t.Fatalf("idempotent SetOwner should not error, got: %v", err)
+	}
+}
+
+func TestSetOwner_NormalizesOwnerType(t *testing.T) {
+	orgUID := uuid.Must(uuid.FromString(testOrgUID))
+
+	fga := &mockFGA{
+		readFn: func(_ context.Context, req *openfga.ReadRequest) (*openfga.ReadResponse, error) {
+			if req.TupleKey.User != fmt.Sprintf("organization:%s", testOrgUID) {
+				t.Errorf("should strip trailing 's': expected organization:, got: %s", req.TupleKey.User)
+			}
+			return &openfga.ReadResponse{Tuples: []*openfga.Tuple{}}, nil
+		},
+		writeFn: func(_ context.Context, req *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			if req.Writes.TupleKeys[0].User != fmt.Sprintf("organization:%s", testOrgUID) {
+				t.Errorf("write should use normalized type, got: %s", req.Writes.TupleKeys[0].User)
+			}
+			return &openfga.WriteResponse{}, nil
+		},
+	}
+	c := newTestClient(fga)
+
+	err := c.SetOwner(context.Background(), "pipeline", testObjectUID, "organizations", orgUID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// ============================================================
+// Purge — delete all permissions for an object
+// ============================================================
+
+func TestPurge_DeletesAllTuples(t *testing.T) {
+	var deletedUsers []string
+
+	fga := &mockFGA{
+		readFn: func(_ context.Context, _ *openfga.ReadRequest) (*openfga.ReadResponse, error) {
+			return &openfga.ReadResponse{
+				Tuples: []*openfga.Tuple{
+					{Key: &openfga.TupleKey{User: "user:alice", Relation: "owner", Object: "pipeline:" + testObjectUID.String()}},
+					{Key: &openfga.TupleKey{User: "user:bob", Relation: "reader", Object: "pipeline:" + testObjectUID.String()}},
+				},
+			}, nil
+		},
+		writeFn: func(_ context.Context, req *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			for _, tk := range req.Deletes.TupleKeys {
+				deletedUsers = append(deletedUsers, tk.User)
+			}
+			return &openfga.WriteResponse{}, nil
+		},
+	}
+	c := newTestClient(fga)
+
+	err := c.Purge(context.Background(), "pipeline", testObjectUID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deletedUsers) != 2 {
+		t.Errorf("expected 2 deletions, got %d", len(deletedUsers))
+	}
+}
+
+func TestPurge_NoTuplesIsNoop(t *testing.T) {
+	fga := &mockFGA{
+		readFn: func(_ context.Context, _ *openfga.ReadRequest) (*openfga.ReadResponse, error) {
+			return &openfga.ReadResponse{Tuples: []*openfga.Tuple{}}, nil
+		},
+		writeFn: func(_ context.Context, _ *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			t.Fatal("should not write when no tuples exist")
+			return nil, nil
+		},
+	}
+	c := newTestClient(fga)
+
+	if err := c.Purge(context.Background(), "pipeline", testObjectUID); err != nil {
+		t.Fatalf("purge with no tuples should succeed, got: %v", err)
+	}
+}
+
+// ============================================================
+// GetOwner — retrieve ownership
+// ============================================================
+
+func TestGetOwner_ReturnsOwner(t *testing.T) {
+	fga := &mockFGA{
+		readFn: func(_ context.Context, _ *openfga.ReadRequest) (*openfga.ReadResponse, error) {
+			return &openfga.ReadResponse{
+				Tuples: []*openfga.Tuple{{
+					Key: &openfga.TupleKey{User: "organization:" + testOrgUID, Relation: "owner"},
+				}},
+			}, nil
+		},
+	}
+	c := newTestClient(fga)
+
+	ownerType, ownerUID, err := c.GetOwner(context.Background(), "pipeline", testObjectUID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ownerType != "organization" || ownerUID != testOrgUID {
+		t.Errorf("expected organization/%s, got %s/%s", testOrgUID, ownerType, ownerUID)
+	}
+}
+
+func TestGetOwner_NoOwnerReturnsError(t *testing.T) {
+	fga := &mockFGA{
+		readFn: func(_ context.Context, _ *openfga.ReadRequest) (*openfga.ReadResponse, error) {
+			return &openfga.ReadResponse{Tuples: []*openfga.Tuple{}}, nil
+		},
+	}
+	c := newTestClient(fga)
+
+	_, _, err := c.GetOwner(context.Background(), "pipeline", testObjectUID)
+	if err == nil {
+		t.Fatal("expected error when no owner exists")
+	}
+}
+
+// ============================================================
+// SetResourcePermission / DeleteResourcePermission
+// ============================================================
+
+func TestSetResourcePermission_EnableWritesTuple(t *testing.T) {
+	var writtenUser, writtenRelation string
+
+	fga := &mockFGA{
+		writeFn: func(_ context.Context, req *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			if req.Writes != nil && len(req.Writes.TupleKeys) > 0 {
+				writtenUser = req.Writes.TupleKeys[0].User
+				writtenRelation = req.Writes.TupleKeys[0].Relation
+			}
+			return &openfga.WriteResponse{}, nil
+		},
+	}
+	c := newTestClient(fga)
+
+	err := c.SetResourcePermission(context.Background(), "file", testObjectUID, "user:"+testUserUID, "editor", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if writtenUser != "user:"+testUserUID {
+		t.Errorf("expected user:%s, got: %s", testUserUID, writtenUser)
+	}
+	if writtenRelation != "editor" {
+		t.Errorf("expected editor relation, got: %s", writtenRelation)
+	}
+}
+
+func TestSetResourcePermission_DisableOnlyDeletes(t *testing.T) {
+	var writesCalled int
+
+	fga := &mockFGA{
+		writeFn: func(_ context.Context, req *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			writesCalled++
+			if req.Writes != nil {
+				t.Error("disable=false should not write new tuples")
+			}
+			return &openfga.WriteResponse{}, nil
+		},
+	}
+	c := newTestClient(fga)
+
+	err := c.SetResourcePermission(context.Background(), "file", testObjectUID, "user:"+testUserUID, "editor", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if writesCalled == 0 {
+		t.Error("should call write (for delete) even when disabling")
+	}
+}
+
+func TestDeleteResourcePermission_DeletesAllStandardRoles(t *testing.T) {
+	var deletedRoles []string
+
+	fga := &mockFGA{
+		writeFn: func(_ context.Context, req *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			if req.Deletes != nil {
+				for _, tk := range req.Deletes.TupleKeys {
+					deletedRoles = append(deletedRoles, tk.Relation)
+				}
+			}
+			return &openfga.WriteResponse{}, nil
+		},
+	}
+	c := newTestClient(fga)
+
+	err := c.DeleteResourcePermission(context.Background(), "file", testObjectUID, "user:"+testUserUID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := map[string]bool{"admin": true, "writer": true, "executor": true, "reader": true}
+	for _, role := range deletedRoles {
+		delete(expected, role)
+	}
+	if len(expected) > 0 {
+		t.Errorf("did not delete all standard roles, missing: %v", expected)
+	}
+}
+
+// ============================================================
+// SetPublicPermission / DeletePublicPermission
+// ============================================================
+
+func TestSetPublicPermission_GrantsCorrectTuples(t *testing.T) {
+	var writtenTuples []string
+
+	fga := &mockFGA{
+		writeFn: func(_ context.Context, req *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			if req.Writes != nil {
+				for _, tk := range req.Writes.TupleKeys {
+					writtenTuples = append(writtenTuples, tk.User+"/"+tk.Relation)
+				}
+			}
+			return &openfga.WriteResponse{}, nil
+		},
+	}
+	c := newTestClient(fga)
+
+	err := c.SetPublicPermission(context.Background(), "knowledgebase", testObjectUID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := map[string]bool{
+		"user:*/reader":    true,
+		"visitor:*/reader": true,
+		"user:*/executor":  true,
+	}
+	for _, tuple := range writtenTuples {
+		delete(expected, tuple)
+	}
+	if len(expected) > 0 {
+		t.Errorf("missing public permission tuples: %v", expected)
+	}
+}
+
+// ============================================================
+// CheckLinkPermission — share code access
+// ============================================================
+
+func TestCheckLinkPermission_ValidCodeChecked(t *testing.T) {
+	shareCode := "abc-share-123"
+
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, req *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			expected := fmt.Sprintf("code:%s", shareCode)
+			if req.TupleKey.User != expected {
+				t.Errorf("expected code identity %s, got: %s", expected, req.TupleKey.User)
+			}
+			return &openfga.CheckResponse{Allowed: true}, nil
+		},
+	}
+	c := newTestClient(fga)
+	ctx := ctxWithHeaders(map[string]string{
+		"instill-share-code": shareCode,
+	})
+
+	granted, err := c.CheckLinkPermission(ctx, "pipeline", testObjectUID, "executor", "instill-share-code")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !granted {
+		t.Error("valid share code should be granted")
+	}
+}
+
+func TestCheckLinkPermission_CodeExistsButDenied(t *testing.T) {
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, _ *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			return &openfga.CheckResponse{Allowed: false}, nil
+		},
+	}
+	c := newTestClient(fga)
+	ctx := ctxWithHeaders(map[string]string{
+		"instill-share-code": "expired-code-456",
+	})
+
+	granted, err := c.CheckLinkPermission(ctx, "pipeline", testObjectUID, "executor", "instill-share-code")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if granted {
+		t.Error("expired or revoked share code should be denied")
+	}
+}
+
+func TestCheckLinkPermission_FGAErrorPropagated(t *testing.T) {
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, _ *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			return nil, fmt.Errorf("openfga timeout")
+		},
+	}
+	c := newTestClient(fga)
+	ctx := ctxWithHeaders(map[string]string{
+		"instill-share-code": "some-code",
+	})
+
+	_, err := c.CheckLinkPermission(ctx, "pipeline", testObjectUID, "executor", "instill-share-code")
+	if err == nil {
+		t.Fatal("FGA error should propagate, not silently fail")
+	}
+}
+
+func TestCheckLinkPermission_MissingCodeReturnsFalse(t *testing.T) {
+	c := newTestClient(&mockFGA{})
+	ctx := ctxWithHeaders(map[string]string{})
+
+	granted, err := c.CheckLinkPermission(ctx, "pipeline", testObjectUID, "executor", "instill-share-code")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if granted {
+		t.Error("missing share code should return false, not error")
+	}
+}
+
+// ============================================================
+// CheckShareLinkPermission — share link token
+// ============================================================
+
+func TestCheckShareLinkPermission_ValidToken(t *testing.T) {
+	token := "share-token-xyz"
+
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, req *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			if req.TupleKey.User != fmt.Sprintf("share_link:%s", token) {
+				t.Errorf("expected share_link identity, got: %s", req.TupleKey.User)
+			}
+			return &openfga.CheckResponse{Allowed: true}, nil
+		},
+	}
+	c := newTestClient(fga)
+
+	granted, err := c.CheckShareLinkPermission(context.Background(), token, "chat", testObjectUID, "reader")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !granted {
+		t.Error("valid share link should be granted")
+	}
+}
+
+func TestCheckShareLinkPermission_TokenDenied(t *testing.T) {
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, _ *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			return &openfga.CheckResponse{Allowed: false}, nil
+		},
+	}
+	c := newTestClient(fga)
+
+	granted, err := c.CheckShareLinkPermission(context.Background(), "revoked-token", "chat", testObjectUID, "reader")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if granted {
+		t.Error("revoked share link token should be denied")
+	}
+}
+
+func TestCheckShareLinkPermission_FGAErrorPropagated(t *testing.T) {
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, _ *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			return nil, status.Error(codes.Internal, "internal error")
+		},
+	}
+	c := newTestClient(fga)
+
+	_, err := c.CheckShareLinkPermission(context.Background(), "token", "chat", testObjectUID, "reader")
+	if err == nil {
+		t.Fatal("generic FGA error should propagate, not be swallowed")
+	}
+}
+
+func TestCheckShareLinkPermission_TypeNotFoundReturnsFalse(t *testing.T) {
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, _ *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			return nil, status.Error(codes.Code(openfga.ErrorCode_type_not_found), "type not found")
+		},
+	}
+	c := newTestClient(fga)
+
+	granted, err := c.CheckShareLinkPermission(context.Background(), "token", "nonexistent", testObjectUID, "reader")
+	if err != nil {
+		t.Fatalf("type_not_found should return false, not error: %v", err)
+	}
+	if granted {
+		t.Error("type_not_found should return false")
+	}
+}
+
+// ============================================================
+// ListPermissions — object enumeration
+// ============================================================
+
+func TestListPermissions_ReturnsObjectUIDs(t *testing.T) {
+	uid1 := uuid.Must(uuid.NewV4())
+	uid2 := uuid.Must(uuid.NewV4())
+
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, req *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			if req.User != fmt.Sprintf("user:%s", testUserUID) {
+				t.Errorf("expected user identity, got: %s", req.User)
+			}
+			return &mockStream{
+				items: []*openfga.StreamedListObjectsResponse{
+					{Object: fmt.Sprintf("pipeline:%s", uid1)},
+					{Object: fmt.Sprintf("pipeline:%s", uid2)},
+				},
+			}, nil
+		},
+	}
+	c := newTestClient(fga)
+	ctx := userCtx(testUserUID)
+
+	uids, err := c.ListPermissions(ctx, "pipeline", "reader", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(uids) != 2 {
+		t.Errorf("expected 2 objects, got %d", len(uids))
+	}
+}
+
+func TestListPermissions_PublicUsesWildcard(t *testing.T) {
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, req *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			if req.User != "user:*" {
+				t.Errorf("public listing should use wildcard, got: %s", req.User)
+			}
+			return &mockStream{items: nil}, nil
+		},
+	}
+	c := newTestClient(fga)
+	ctx := userCtx(testUserUID)
+
+	_, err := c.ListPermissions(ctx, "pipeline", "reader", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestListPermissions_VisitorUsesVisitorIdentity(t *testing.T) {
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, req *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			expected := fmt.Sprintf("visitor:%s", testVisitorUID)
+			if req.User != expected {
+				t.Errorf("visitor should use visitor identity, got: %s", req.User)
+			}
+			return &mockStream{items: nil}, nil
+		},
+	}
+	c := newTestClient(fga)
+	ctx := visitorCtx(testVisitorUID)
+
+	_, err := c.ListPermissions(ctx, "knowledgebase", "reader", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestListPermissions_RecvErrorMidStream(t *testing.T) {
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			return &mockErrorStream{
+				items: []*openfga.StreamedListObjectsResponse{
+					{Object: fmt.Sprintf("pipeline:%s", testObjectUID)},
+				},
+				errAfter: 1,
+			}, nil
+		},
+	}
+	c := newTestClient(fga)
+	ctx := userCtx(testUserUID)
+
+	_, err := c.ListPermissions(ctx, "pipeline", "reader", false)
+	if err == nil {
+		t.Fatal("error during stream receive should propagate")
+	}
+}
+
+func TestListPermissions_StreamErrorPropagated(t *testing.T) {
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			return nil, fmt.Errorf("connection lost mid-stream")
+		},
+	}
+	c := newTestClient(fga)
+	ctx := userCtx(testUserUID)
+
+	_, err := c.ListPermissions(ctx, "pipeline", "reader", false)
+	if err == nil {
+		t.Fatal("stream error should propagate so caller can retry")
+	}
+}
+
+func TestListPermissions_TypeNotFoundReturnsEmpty(t *testing.T) {
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			return nil, status.Error(codes.Code(openfga.ErrorCode_type_not_found), "type not found")
+		},
+	}
+	c := newTestClient(fga)
+	ctx := userCtx(testUserUID)
+
+	uids, err := c.ListPermissions(ctx, "nonexistent", "reader", false)
+	if err != nil {
+		t.Fatalf("type_not_found should return empty list, not error: %v", err)
+	}
+	if len(uids) != 0 {
+		t.Errorf("expected empty list, got %d items", len(uids))
+	}
+}
+
+// ============================================================
+// CheckPublicExecutable
+// ============================================================
+
+func TestCheckPublicExecutable_Allowed(t *testing.T) {
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, req *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			if req.TupleKey.User != "user:*" {
+				t.Errorf("public check should use user:*, got: %s", req.TupleKey.User)
+			}
+			if req.TupleKey.Relation != "executor" {
+				t.Errorf("should check executor relation, got: %s", req.TupleKey.Relation)
+			}
+			return &openfga.CheckResponse{Allowed: true}, nil
+		},
+	}
+	c := newTestClient(fga)
+
+	allowed, err := c.CheckPublicExecutable(context.Background(), "pipeline", testObjectUID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !allowed {
+		t.Error("public executable should be allowed")
+	}
+}
+
+func TestCheckPublicExecutable_CachedResultSkipsFGA(t *testing.T) {
+	fgaCalls := 0
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, _ *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			fgaCalls++
+			return &openfga.CheckResponse{Allowed: true}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+
+	// First call hits FGA
+	_, _ = c.CheckPublicExecutable(context.Background(), "pipeline", testObjectUID)
+	// Second call should use cache
+	allowed, err := c.CheckPublicExecutable(context.Background(), "pipeline", testObjectUID)
+	if err != nil || !allowed {
+		t.Fatalf("unexpected: err=%v, allowed=%v", err, allowed)
+	}
+	if fgaCalls != 1 {
+		t.Errorf("expected 1 FGA call (second should be cached), got %d", fgaCalls)
+	}
+}
+
+func TestCheckPublicExecutable_NotPublic(t *testing.T) {
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, _ *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			return &openfga.CheckResponse{Allowed: false}, nil
+		},
+	}
+	c := newTestClient(fga)
+
+	allowed, err := c.CheckPublicExecutable(context.Background(), "pipeline", testObjectUID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if allowed {
+		t.Error("non-public pipeline should not be executable")
+	}
+}
+
+// ============================================================
+// DeletePublicPermission — revoke public access
+// ============================================================
+
+func TestDeletePublicPermission_RemovesBothUserAndVisitor(t *testing.T) {
+	var deletedUsers []string
+
+	fga := &mockFGA{
+		writeFn: func(_ context.Context, req *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			if req.Deletes != nil {
+				for _, tk := range req.Deletes.TupleKeys {
+					deletedUsers = append(deletedUsers, tk.User)
+				}
+			}
+			return &openfga.WriteResponse{}, nil
+		},
+	}
+	c := newTestClient(fga)
+
+	err := c.DeletePublicPermission(context.Background(), "knowledgebase", testObjectUID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	hasUser, hasVisitor := false, false
+	for _, u := range deletedUsers {
+		if u == "user:*" {
+			hasUser = true
+		}
+		if u == "visitor:*" {
+			hasVisitor = true
+		}
+	}
+	if !hasUser || !hasVisitor {
+		t.Errorf("should delete both user:* and visitor:*, deleted: %v", deletedUsers)
+	}
+}
+
+// ============================================================
+// IsUserPinned / PinUserForConsistency — read-after-write
+// ============================================================
+
+func TestIsUserPinned_NoRedisReturnsFalse(t *testing.T) {
+	c := newTestClient(&mockFGA{})
+	ctx := userCtx(testUserUID)
+
+	if c.IsUserPinned(ctx) {
+		t.Error("without Redis, user should never be pinned")
+	}
+}
+
+func TestIsUserPinned_UnpinnedUserReturnsFalse(t *testing.T) {
+	c, mr := newTestClientWithCache(&mockFGA{})
+	defer mr.Close()
+	ctx := userCtx(testUserUID)
+
+	if c.IsUserPinned(ctx) {
+		t.Error("user should not be pinned by default")
+	}
+}
+
+func TestPinUserForConsistency_PinnedUserIsDetected(t *testing.T) {
+	c, mr := newTestClientWithCache(&mockFGA{})
+	defer mr.Close()
+	c.config.Replica.ReplicationTimeFrame = 30
+	ctx := userCtx(testUserUID)
+
+	c.PinUserForConsistency(ctx)
+
+	if !c.IsUserPinned(ctx) {
+		t.Error("after pinning, user should be detected as pinned")
+	}
+}
+
+func TestPinUserForConsistency_NoRedisIsNoop(t *testing.T) {
+	c := newTestClient(&mockFGA{})
+	ctx := userCtx(testUserUID)
+
+	// Should not panic
+	c.PinUserForConsistency(ctx)
+}
+
+func TestPinUserForConsistency_ZeroTimeFrameIsNoop(t *testing.T) {
+	c, mr := newTestClientWithCache(&mockFGA{})
+	defer mr.Close()
+	c.config.Replica.ReplicationTimeFrame = 0
+	ctx := userCtx(testUserUID)
+
+	c.PinUserForConsistency(ctx)
+
+	if c.IsUserPinned(ctx) {
+		t.Error("zero replication time frame should not pin user")
+	}
+}
+
+// ============================================================
+// getClient — read/write routing with pinning
+// ============================================================
+
+func TestGetClient_PinnedUserReadsFromPrimary(t *testing.T) {
+	primary := &mockFGA{}
+	replica := &mockFGA{}
+
+	mr := miniredis.RunT(t)
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	c := &ACLClient{
+		writeClient:  primary,
+		readClient:   replica,
+		redisClient:  rc,
+		storeID:      testStoreID,
+		modelID:      testModelID,
+		cacheEnabled: true,
+		cacheTTL:     60 * time.Second,
+		config:       Config{Replica: ReplicaConfig{ReplicationTimeFrame: 30}},
+	}
+	ctx := userCtx(testUserUID)
+
+	// Pin the user
+	c.PinUserForConsistency(ctx)
+
+	// Read should go to primary (writeClient), not replica
+	client := c.getClient(ctx, ReadMode)
+	if client != primary {
+		t.Error("pinned user should read from primary, not replica")
+	}
+}
+
+func TestGetClient_UnpinnedUserReadsFromReplica(t *testing.T) {
+	primary := &mockFGA{}
+	replica := &mockFGA{}
+
+	mr := miniredis.RunT(t)
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	c := &ACLClient{
+		writeClient: primary,
+		readClient:  replica,
+		redisClient: rc,
+		storeID:     testStoreID,
+		modelID:     testModelID,
+	}
+	ctx := userCtx(testUserUID)
+
+	client := c.getClient(ctx, ReadMode)
+	if client != replica {
+		t.Error("unpinned user should read from replica")
+	}
+}
+
+func TestGetClient_WriteAlwaysGoesToPrimary(t *testing.T) {
+	primary := &mockFGA{}
+	replica := &mockFGA{}
+
+	c := &ACLClient{
+		writeClient: primary,
+		readClient:  replica,
+		storeID:     testStoreID,
+		modelID:     testModelID,
+	}
+	ctx := userCtx(testUserUID)
+
+	client := c.getClient(ctx, WriteMode)
+	if client != primary {
+		t.Error("writes should always go to primary")
+	}
+}
+
+// ============================================================
+// Cache invalidation after permission changes
+// ============================================================
+
+func TestSetResourcePermission_InvalidatesCacheAfterGrant(t *testing.T) {
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, _ *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			return &openfga.CheckResponse{Allowed: false}, nil
+		},
+		writeFn: func(_ context.Context, _ *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			return &openfga.WriteResponse{}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	ctx := userCtx(testUserUID)
+
+	// Cache a "denied" result
+	granted, _ := c.CheckPermission(ctx, "file", testObjectUID, "reader")
+	if granted {
+		t.Fatal("should be denied initially")
+	}
+
+	// Grant permission — should invalidate cache
+	_ = c.SetResourcePermission(context.Background(), "file", testObjectUID, "user:"+testUserUID, "reader", true)
+
+	// Now update mock to return allowed
+	fga.checkFn = func(_ context.Context, _ *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+		return &openfga.CheckResponse{Allowed: true}, nil
+	}
+
+	// Next check should hit FGA (cache invalidated), not return stale "denied"
+	granted, _ = c.CheckPermission(ctx, "file", testObjectUID, "reader")
+	if !granted {
+		t.Error("after granting permission and invalidating cache, should be allowed")
+	}
+}
+
+// ============================================================
+// SetOwner — error propagation
+// ============================================================
+
+func TestSetOwner_WriteErrorPropagated(t *testing.T) {
+	fga := &mockFGA{
+		readFn: func(_ context.Context, _ *openfga.ReadRequest) (*openfga.ReadResponse, error) {
+			return &openfga.ReadResponse{Tuples: []*openfga.Tuple{}}, nil
+		},
+		writeFn: func(_ context.Context, _ *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			return nil, fmt.Errorf("FGA write failed")
+		},
+	}
+	c := newTestClient(fga)
+
+	err := c.SetOwner(context.Background(), "pipeline", testObjectUID, "user", uuid.Must(uuid.FromString(testUserUID)))
+	if err == nil {
+		t.Fatal("write error should propagate")
+	}
+}
+
+func TestSetOwner_ReadErrorPropagated(t *testing.T) {
+	fga := &mockFGA{
+		readFn: func(_ context.Context, _ *openfga.ReadRequest) (*openfga.ReadResponse, error) {
+			return nil, fmt.Errorf("FGA read failed")
+		},
+	}
+	c := newTestClient(fga)
+
+	err := c.SetOwner(context.Background(), "pipeline", testObjectUID, "user", uuid.Must(uuid.FromString(testUserUID)))
+	if err == nil {
+		t.Fatal("read error should propagate")
+	}
+}
+
+// ============================================================
+// Config
+// ============================================================
+
+func TestDefaultCacheConfig(t *testing.T) {
+	cfg := DefaultCacheConfig()
+	if !cfg.Enabled {
+		t.Error("default cache should be enabled")
+	}
+	if cfg.TTL != 60 {
+		t.Errorf("default TTL should be 60, got %d", cfg.TTL)
+	}
+}
+
+func TestCacheTTLDuration_DefaultsTo60Seconds(t *testing.T) {
+	cfg := CacheConfig{TTL: 0}
+	if cfg.CacheTTLDuration() != 60*time.Second {
+		t.Errorf("zero TTL should default to 60s, got %v", cfg.CacheTTLDuration())
+	}
+}
+
+func TestCacheTTLDuration_CustomValue(t *testing.T) {
+	cfg := CacheConfig{TTL: 120}
+	if cfg.CacheTTLDuration() != 120*time.Second {
+		t.Errorf("expected 120s, got %v", cfg.CacheTTLDuration())
+	}
+}
+
+// ============================================================
+// Utility functions
+// ============================================================
+
+func TestPermissionCacheKey_Format(t *testing.T) {
+	key := permissionCacheKey("user", testUserUID, "pipeline", testObjectUID.String(), "reader")
+	expected := fmt.Sprintf("acl:perm:user:%s:pipeline:%s:reader", testUserUID, testObjectUID)
+	if key != expected {
+		t.Errorf("cache key mismatch:\n  got:  %s\n  want: %s", key, expected)
+	}
+}
+
+func TestGetModelID_ReturnsCachedValue(t *testing.T) {
+	c := newTestClient(&mockFGA{})
+	if c.GetModelID() != testModelID {
+		t.Errorf("expected %s, got %s", testModelID, c.GetModelID())
+	}
+}
+
+func TestGetStoreID_ReturnsCachedValue(t *testing.T) {
+	c := newTestClient(&mockFGA{})
+	if c.GetStoreID() != testStoreID {
+		t.Errorf("expected %s, got %s", testStoreID, c.GetStoreID())
+	}
+}
+
+func TestGetAuthorizationModelID_EmptyReturnsError(t *testing.T) {
+	c := &ACLClient{modelID: ""}
+	_, err := c.getAuthorizationModelID(context.Background())
+	if err == nil {
+		t.Fatal("empty model ID should return error")
+	}
+}
