@@ -3,6 +3,7 @@ module github.com/instill-ai/x
 go 1.25.6
 
 require (
+	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/frankban/quicktest v1.14.6
 	github.com/gofrs/uuid v4.4.0+incompatible
 	github.com/gojuno/minimock/v3 v3.4.5
@@ -85,6 +86,7 @@ require (
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/tinylib/msgp v1.3.0 // indirect
 	github.com/twmb/murmur3 v1.1.8 // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.37.0 // indirect
 	go.opentelemetry.io/otel/metric v1.37.0 // indirect
