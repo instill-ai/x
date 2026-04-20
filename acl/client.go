@@ -36,7 +36,10 @@ type Client interface {
 	// CheckPublicExecutable checks if an object has public execute permission.
 	CheckPublicExecutable(ctx context.Context, objectType string, objectUID uuid.UUID) (bool, error)
 	// ListPermissions lists all objects of a type that the current user has a role for.
-	ListPermissions(ctx context.Context, objectType string, role string, isPublic bool) ([]uuid.UUID, error)
+	ListPermissions(ctx context.Context, objectType string, role string) ([]uuid.UUID, error)
+	// ListPublicPermissions lists all objects of a type that are readable by
+	// everyone (tuples keyed to the FGA wildcard `user:*`).
+	ListPublicPermissions(ctx context.Context, objectType string, role string) ([]uuid.UUID, error)
 	// SetResourcePermission sets a permission for a user on any resource type.
 	SetResourcePermission(ctx context.Context, objectType string, objectUID uuid.UUID, user, role string, enable bool) error
 	// DeleteResourcePermission deletes all permissions for a user on a resource.
@@ -414,24 +417,83 @@ func (c *ACLClient) Purge(ctx context.Context, objectType string, objectUID uuid
 	return nil
 }
 
+// resolveACLSubject derives the OpenFGA subject (type, UID) from the
+// incoming request headers. Every ACL read path should funnel through
+// this helper so that the "who is asking?" decision is made in exactly
+// one place.
+//
+// Why this exists
+// ---------------
+// The earlier in-line logic selected the subject by branching on
+// `Instill-Auth-Type` alone:
+//
+//	if authType == "user" { uid = userUIDHeader } else { uid = visitorUIDHeader }
+//
+// That encodes an invariant that stopped holding once dual-auth (a
+// signed-in reader viewing a `/r/{token}` share link) became real:
+// the gateway stamps `Instill-Auth-Type: capability` together with a
+// non-empty `Instill-User-Uid` (and no visitor UID, because visitor
+// UIDs are only minted when the user UID is empty — see
+// api-gateway-ee's authenticateCapabilityToken). The else-branch then
+// read an empty visitor UID and every ACL check surfaced as
+// `unauthenticated: userUID is empty in check permission`, 401'ing
+// core flows such as `CreateChat` on `/r/{token}`.
+//
+// Selection rules
+// ---------------
+//  1. If `Instill-User-Uid` is non-empty, the caller is an
+//     authenticated user. The FGA subject is `user:{uuid}` regardless
+//     of `Instill-Auth-Type`, because all authenticated tuples in the
+//     store are keyed that way — emitting `capability:{uuid}` would
+//     never match a stored tuple and silently deny access.
+//
+//  2. Otherwise, if `Instill-Auth-Type` is a visitor-shaped label
+//     (`visitor` or `capability`) and `Instill-Visitor-Uid` is set,
+//     the caller is an anonymous visitor. The subject preserves the
+//     auth-type label (`visitor:{uuid}` / `capability:{uuid}`) so
+//     tuples written under those types keep resolving — visitor chat
+//     ownership, share_link userset expansion, etc.
+//
+//  3. Otherwise, no usable identity was found. Returning an error
+//     here preserves the long-standing "empty subject = unauthenticated"
+//     contract that callers rely on for 401 mapping.
+//
+// The returned `userType` is safe to use for both the FGA `User`
+// tuple field and the permission cache key without further munging.
+func resolveACLSubject(ctx context.Context) (userType, userUID string, err error) {
+	if uid := resource.GetRequestSingleHeader(ctx, constant.HeaderUserUIDKey); uid != "" {
+		// Rule (1): authenticated user. Always FGA-subject-type "user",
+		// even if the request also carries a capability/visitor label
+		// (dual-auth on a shared-link reader, etc.).
+		return "user", uid, nil
+	}
+
+	authType := resource.GetRequestSingleHeader(ctx, constant.HeaderAuthTypeKey)
+	switch authType {
+	case "visitor", "capability":
+		visitorUID := resource.GetRequestSingleHeader(ctx, constant.HeaderVisitorUIDKey)
+		if visitorUID == "" {
+			return "", "", fmt.Errorf("%w: userUID is empty in check permission", errorsx.ErrUnauthenticated)
+		}
+		// Rule (2): preserve the visitor/capability FGA subject type
+		// so existing tuples (e.g. visitor-owned chats, share_link
+		// tokens) keep resolving.
+		return authType, visitorUID, nil
+	}
+
+	// Rule (3): no recognizable identity header. The upstream "user"
+	// branch lost its user-UID header before reaching us (bug in the
+	// gateway or a mis-forwarded gRPC-to-gRPC hop) — fail closed.
+	return "", "", fmt.Errorf("%w: userUID is empty in check permission", errorsx.ErrUnauthenticated)
+}
+
 // CheckPermission verifies if the current user has a specific role for an object.
 func (c *ACLClient) CheckPermission(ctx context.Context, objectType string, objectUID uuid.UUID, role string) (bool, error) {
 	log, _ := logx.GetZapLogger(ctx)
 
-	// Retrieve the user type from the request context headers
-	userType := resource.GetRequestSingleHeader(ctx, constant.HeaderAuthTypeKey)
-	userUID := ""
-
-	// Determine the user UID based on the user type
-	if userType == "user" {
-		userUID = resource.GetRequestSingleHeader(ctx, constant.HeaderUserUIDKey)
-	} else {
-		userUID = resource.GetRequestSingleHeader(ctx, constant.HeaderVisitorUIDKey)
-	}
-
-	// Check if the user UID is empty and return an error if it is
-	if userUID == "" {
-		return false, fmt.Errorf("%w: userUID is empty in check permission", errorsx.ErrUnauthenticated)
+	userType, userUID, err := resolveACLSubject(ctx)
+	if err != nil {
+		return false, err
 	}
 
 	// Determine whether to bypass caches and use HIGHER_CONSISTENCY.
@@ -582,22 +644,47 @@ func (c *ACLClient) IsUserPinned(ctx context.Context) bool {
 	return !errors.Is(c.redisClient.Get(ctx, pinKey).Err(), redis.Nil)
 }
 
-// ListPermissions lists all objects of a type that the current user has a role for.
-// Uses StreamedListObjects to avoid the 1000 result limit of the regular ListObjects API.
-func (c *ACLClient) ListPermissions(ctx context.Context, objectType string, role string, isPublic bool) ([]uuid.UUID, error) {
-	userType := resource.GetRequestSingleHeader(ctx, constant.HeaderAuthTypeKey)
-	userUIDStr := ""
-	if userType == "user" {
-		userUIDStr = resource.GetRequestSingleHeader(ctx, constant.HeaderUserUIDKey)
-	} else {
-		userUIDStr = resource.GetRequestSingleHeader(ctx, constant.HeaderVisitorUIDKey)
+// ListPermissions lists all objects of a type that the current user
+// has the given role on. The caller's identity is resolved from the
+// request context via resolveACLSubject (authenticated user UID takes
+// precedence, with visitor/capability UIDs as the fallback).
+//
+// Use StreamedListObjects under the hood to avoid the 1000-result
+// limit of the regular ListObjects API, which matters for roles like
+// "reader" where a single user can be granted access to thousands of
+// objects.
+//
+// Callers that want to enumerate globally public objects (tuples keyed
+// to `user:*`) must use ListPublicPermissions instead; there is no
+// flag here because a wildcard listing has no caller identity and
+// conflating "list as me" with "list as anyone" has historically
+// produced subtle bugs (e.g. silently returning the public set when
+// the caller's identity failed to resolve).
+func (c *ACLClient) ListPermissions(ctx context.Context, objectType string, role string) ([]uuid.UUID, error) {
+	userType, userUIDStr, err := resolveACLSubject(ctx)
+	if err != nil {
+		return nil, err
 	}
+	return c.listObjectsForSubject(ctx, objectType, role, userType, userUIDStr)
+}
 
-	if isPublic {
-		userUIDStr = "*"
-	}
+// ListPublicPermissions lists all objects of a type that are readable
+// by everyone — i.e. tuples whose subject is the FGA wildcard
+// `user:*`. Separate from ListPermissions because the two have
+// incompatible authorisation semantics: a wildcard query has no
+// caller identity, must not return empty on an unauthenticated
+// request, and is never subject to the per-user read-after-write
+// pinning that ListPermissions honours.
+func (c *ACLClient) ListPublicPermissions(ctx context.Context, objectType string, role string) ([]uuid.UUID, error) {
+	return c.listObjectsForSubject(ctx, objectType, role, "user", "*")
+}
 
-	// Get the latest authorization model ID
+// listObjectsForSubject issues a StreamedListObjects call for the
+// given FGA subject. Factored out so ListPermissions (caller-scoped)
+// and ListPublicPermissions (wildcard) can share the streaming,
+// consistency, and error-translation logic without each growing its
+// own copy that then drifts.
+func (c *ACLClient) listObjectsForSubject(ctx context.Context, objectType, role, userType, userUIDStr string) ([]uuid.UUID, error) {
 	modelID, err := c.getAuthorizationModelID(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting authorization model: %w", err)
@@ -612,9 +699,6 @@ func (c *ACLClient) ListPermissions(ctx context.Context, objectType string, role
 		consistency = openfga.ConsistencyPreference_HIGHER_CONSISTENCY
 	}
 
-	// Use StreamedListObjects to avoid the 1000 result limit of regular ListObjects.
-	// This streams all matching objects without pagination, which is essential when
-	// users have permissions for more than 1000 objects.
 	stream, err := c.getClient(ctx, ReadMode).StreamedListObjects(ctx, &openfga.StreamedListObjectsRequest{
 		StoreId:              c.storeID,
 		AuthorizationModelId: modelID,
