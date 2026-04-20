@@ -69,8 +69,12 @@ err := client.SetOwner(ctx, "pipeline", pipelineUID, "user", userUID)
 ### List Permissions
 
 ```go
-// List all pipelines the current user can read
-pipelineUIDs, err := client.ListPermissions(ctx, "pipeline", "reader", false)
+// List all pipelines the current caller (authenticated user or
+// visitor, resolved from the request headers) can read.
+pipelineUIDs, err := client.ListPermissions(ctx, "pipeline", "reader")
+
+// List all pipelines that are publicly readable (FGA wildcard user:*).
+publicPipelineUIDs, err := client.ListPublicPermissions(ctx, "pipeline", "reader")
 ```
 
 ### Purge Permissions

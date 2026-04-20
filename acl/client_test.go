@@ -193,6 +193,31 @@ func visitorCtx(visitorUID string) context.Context {
 	})
 }
 
+// capabilityVisitorCtx models an anonymous visitor reading a
+// `/r/{token}` share link. The gateway stamps
+// Instill-Auth-Type=capability together with Instill-Visitor-Uid (no
+// user UID) — cap-token adds resource scope on top of the visitor
+// identity but does not itself authenticate anyone.
+func capabilityVisitorCtx(visitorUID string) context.Context {
+	return ctxWithHeaders(map[string]string{
+		constant.HeaderAuthTypeKey:   "capability",
+		constant.HeaderVisitorUIDKey: visitorUID,
+	})
+}
+
+// dualAuthCtx models an authenticated user who is also reading a
+// `/r/{token}` share link. The gateway stamps
+// Instill-Auth-Type=capability AND Instill-User-Uid (from the JWT)
+// AND does NOT set a visitor UID. This is the regression vector for
+// the dual-auth bug: the old selector branched on auth-type first and
+// silently dropped the user UID.
+func dualAuthCtx(userUID string) context.Context {
+	return ctxWithHeaders(map[string]string{
+		constant.HeaderAuthTypeKey: "capability",
+		constant.HeaderUserUIDKey:  userUID,
+	})
+}
+
 func orgDelegationCtx(userUID, orgUID string) context.Context {
 	return ctxWithHeaders(map[string]string{
 		constant.HeaderAuthTypeKey:     "user",
@@ -976,7 +1001,7 @@ func TestListPermissions_ReturnsObjectUIDs(t *testing.T) {
 	c := newTestClient(fga)
 	ctx := userCtx(testUserUID)
 
-	uids, err := c.ListPermissions(ctx, "pipeline", "reader", false)
+	uids, err := c.ListPermissions(ctx, "pipeline", "reader")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -985,7 +1010,14 @@ func TestListPermissions_ReturnsObjectUIDs(t *testing.T) {
 	}
 }
 
-func TestListPermissions_PublicUsesWildcard(t *testing.T) {
+// TestListPublicPermissions_UsesWildcardSubject pins the contract of
+// the dedicated public-listing method: it issues the FGA query with
+// the `user:*` wildcard subject, regardless of who (if anyone) the
+// caller is. The previous `ListPermissions(..., isPublic bool)` API
+// coupled this to a parameter flag and conflated unauthenticated
+// listings with public ones; the split makes the intent explicit at
+// the call site.
+func TestListPublicPermissions_UsesWildcardSubject(t *testing.T) {
 	fga := &mockFGA{
 		streamedListObjectsFn: func(_ context.Context, req *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
 			if req.User != "user:*" {
@@ -997,8 +1029,7 @@ func TestListPermissions_PublicUsesWildcard(t *testing.T) {
 	c := newTestClient(fga)
 	ctx := userCtx(testUserUID)
 
-	_, err := c.ListPermissions(ctx, "pipeline", "reader", true)
-	if err != nil {
+	if _, err := c.ListPublicPermissions(ctx, "pipeline", "reader"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -1016,7 +1047,7 @@ func TestListPermissions_VisitorUsesVisitorIdentity(t *testing.T) {
 	c := newTestClient(fga)
 	ctx := visitorCtx(testVisitorUID)
 
-	_, err := c.ListPermissions(ctx, "knowledgebase", "reader", false)
+	_, err := c.ListPermissions(ctx, "knowledgebase", "reader")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1036,7 +1067,7 @@ func TestListPermissions_RecvErrorMidStream(t *testing.T) {
 	c := newTestClient(fga)
 	ctx := userCtx(testUserUID)
 
-	_, err := c.ListPermissions(ctx, "pipeline", "reader", false)
+	_, err := c.ListPermissions(ctx, "pipeline", "reader")
 	if err == nil {
 		t.Fatal("error during stream receive should propagate")
 	}
@@ -1051,7 +1082,7 @@ func TestListPermissions_StreamErrorPropagated(t *testing.T) {
 	c := newTestClient(fga)
 	ctx := userCtx(testUserUID)
 
-	_, err := c.ListPermissions(ctx, "pipeline", "reader", false)
+	_, err := c.ListPermissions(ctx, "pipeline", "reader")
 	if err == nil {
 		t.Fatal("stream error should propagate so caller can retry")
 	}
@@ -1066,12 +1097,120 @@ func TestListPermissions_TypeNotFoundReturnsEmpty(t *testing.T) {
 	c := newTestClient(fga)
 	ctx := userCtx(testUserUID)
 
-	uids, err := c.ListPermissions(ctx, "nonexistent", "reader", false)
+	uids, err := c.ListPermissions(ctx, "nonexistent", "reader")
 	if err != nil {
 		t.Fatalf("type_not_found should return empty list, not error: %v", err)
 	}
 	if len(uids) != 0 {
 		t.Errorf("expected empty list, got %d items", len(uids))
+	}
+}
+
+// ============================================================
+// resolveACLSubject — dual-auth regression coverage
+// ============================================================
+//
+// These tests pin the behavioural contract of resolveACLSubject
+// through its two public callers (CheckPermission and
+// ListPermissions). The shared invariant is:
+//
+//	Instill-User-Uid, when present, wins over Instill-Auth-Type.
+//
+// That invariant used to be inverted — the selector keyed on auth
+// type first, so a request that legitimately carried BOTH a JWT and
+// an X-Capability-Token (the "logged-in user follows a /r/{token}
+// share link" flow) resolved to a capability subject with an empty
+// UID and was rejected as unauthenticated at the FGA layer.
+
+// TestCheckPermission_DualAuth_UsesUserSubject ensures that an
+// authenticated caller with an additional capability token is still
+// checked against FGA as `user:<uid>`. The cap-token only widens
+// which resources they may reach; it must not strip their identity.
+func TestCheckPermission_DualAuth_UsesUserSubject(t *testing.T) {
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, req *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			want := fmt.Sprintf("user:%s", testUserUID)
+			if req.TupleKey.User != want {
+				t.Errorf("dual-auth must check as %s, got %s", want, req.TupleKey.User)
+			}
+			return &openfga.CheckResponse{Allowed: true}, nil
+		},
+	}
+	c := newTestClient(fga)
+	ctx := dualAuthCtx(testUserUID)
+
+	granted, err := c.CheckPermission(ctx, "pipeline", testObjectUID, "reader")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !granted {
+		t.Error("dual-auth user should be granted when FGA allows")
+	}
+}
+
+// TestCheckPermission_CapabilityVisitor_PreservesCapabilitySubject
+// covers the "unauthenticated visitor on a share link" flow. It must
+// keep resolving to `capability:<uid>` (not rewritten to
+// `visitor:<uid>`) because tuples for share-link ownership and cross
+// -workspace reads are written under the `capability` FGA user type
+// by the backend — rewriting the subject here would silently stop
+// matching those tuples and break share links for logged-out users.
+func TestCheckPermission_CapabilityVisitor_PreservesCapabilitySubject(t *testing.T) {
+	fga := &mockFGA{
+		checkFn: func(_ context.Context, req *openfga.CheckRequest) (*openfga.CheckResponse, error) {
+			want := fmt.Sprintf("capability:%s", testVisitorUID)
+			if req.TupleKey.User != want {
+				t.Errorf("capability visitor must check as %s, got %s", want, req.TupleKey.User)
+			}
+			return &openfga.CheckResponse{Allowed: true}, nil
+		},
+	}
+	c := newTestClient(fga)
+	ctx := capabilityVisitorCtx(testVisitorUID)
+
+	if _, err := c.CheckPermission(ctx, "pipeline", testObjectUID, "reader"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestCheckPermission_NoIdentity_Unauthenticated guards the negative
+// case: a context with neither a user UID nor a recognised
+// visitor/capability auth type must produce an explicit
+// unauthenticated error instead of silently querying FGA with an
+// empty subject (which historically returned "permission denied" and
+// hid the real problem).
+func TestCheckPermission_NoIdentity_Unauthenticated(t *testing.T) {
+	c := newTestClient(&mockFGA{})
+	ctx := ctxWithHeaders(map[string]string{})
+
+	_, err := c.CheckPermission(ctx, "pipeline", testObjectUID, "reader")
+	if err == nil {
+		t.Fatal("missing identity should surface as an error, not a silent deny")
+	}
+	if !errors.Is(err, errorsx.ErrUnauthenticated) {
+		t.Errorf("expected ErrUnauthenticated, got %v", err)
+	}
+}
+
+// TestListPermissions_DualAuth_UsesUserSubject mirrors the
+// CheckPermission dual-auth case for the streaming list API, since
+// both functions share resolveACLSubject and we want each public
+// entry point to have explicit regression coverage.
+func TestListPermissions_DualAuth_UsesUserSubject(t *testing.T) {
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, req *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			want := fmt.Sprintf("user:%s", testUserUID)
+			if req.User != want {
+				t.Errorf("dual-auth must list as %s, got %s", want, req.User)
+			}
+			return &mockStream{items: nil}, nil
+		},
+	}
+	c := newTestClient(fga)
+	ctx := dualAuthCtx(testUserUID)
+
+	if _, err := c.ListPermissions(ctx, "pipeline", "reader"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
