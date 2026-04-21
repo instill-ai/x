@@ -1148,17 +1148,21 @@ func TestCheckPermission_DualAuth_UsesUserSubject(t *testing.T) {
 	}
 }
 
-// TestCheckPermission_CapabilityVisitor_PreservesCapabilitySubject
-// covers the "unauthenticated visitor on a share link" flow. It must
-// keep resolving to `capability:<uid>` (not rewritten to
-// `visitor:<uid>`) because tuples for share-link ownership and cross
-// -workspace reads are written under the `capability` FGA user type
-// by the backend — rewriting the subject here would silently stop
-// matching those tuples and break share links for logged-out users.
-func TestCheckPermission_CapabilityVisitor_PreservesCapabilitySubject(t *testing.T) {
+// TestCheckPermission_CapabilityVisitor_CollapsesToVisitorSubject
+// covers the "unauthenticated visitor on a share link" flow. Both
+// `Instill-Auth-Type: visitor` and `Instill-Auth-Type: capability`
+// must resolve to FGA subject type `visitor`: the identity (browser
+// cookie UID) is identical, and the FGA schema has no `capability`
+// type. Per-resource share-link grants are evaluated separately via
+// CheckShareLinkPermission against `share_link:<token>` tuples, not
+// via the caller's FGA subject. Emitting `capability:<uid>` here
+// would produce a subject with no possible tuple match and surface
+// as a `type 'capability' not found` FGA error — exactly the
+// failure mode this test guards against.
+func TestCheckPermission_CapabilityVisitor_CollapsesToVisitorSubject(t *testing.T) {
 	fga := &mockFGA{
 		checkFn: func(_ context.Context, req *openfga.CheckRequest) (*openfga.CheckResponse, error) {
-			want := fmt.Sprintf("capability:%s", testVisitorUID)
+			want := fmt.Sprintf("visitor:%s", testVisitorUID)
 			if req.TupleKey.User != want {
 				t.Errorf("capability visitor must check as %s, got %s", want, req.TupleKey.User)
 			}

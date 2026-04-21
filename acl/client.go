@@ -54,6 +54,11 @@ type Client interface {
 	CheckLinkPermission(ctx context.Context, objectType string, objectUID uuid.UUID, role string, codeHeaderKey string) (bool, error)
 	// CheckShareLinkPermission checks if a share link token has the specified permission.
 	CheckShareLinkPermission(ctx context.Context, shareToken string, objectType string, objectUID uuid.UUID, relation string) (bool, error)
+	// CheckPermissionWithShareLink runs both an identity-scoped check
+	// and, when shareToken is non-empty, a share_link-scoped check, and
+	// returns true if EITHER grants access. See the method doc for the
+	// full contract and rationale.
+	CheckPermissionWithShareLink(ctx context.Context, objectType string, objectUID uuid.UUID, relation string, shareToken string) (bool, error)
 	// CheckRequesterPermission validates organization impersonation.
 	CheckRequesterPermission(ctx context.Context) error
 	// IsUserPinned checks if the user is currently pinned to the primary database for read-after-write consistency.
@@ -449,10 +454,22 @@ func (c *ACLClient) Purge(ctx context.Context, objectType string, objectUID uuid
 //
 //  2. Otherwise, if `Instill-Auth-Type` is a visitor-shaped label
 //     (`visitor` or `capability`) and `Instill-Visitor-Uid` is set,
-//     the caller is an anonymous visitor. The subject preserves the
-//     auth-type label (`visitor:{uuid}` / `capability:{uuid}`) so
-//     tuples written under those types keep resolving — visitor chat
-//     ownership, share_link userset expansion, etc.
+//     the caller is an anonymous visitor. Both labels collapse to
+//     FGA subject type `visitor` because:
+//       - The identity (the browser cookie visitor UID) is the same
+//         in both cases — the only difference is whether the request
+//         also carries a share-link capability token.
+//       - Per-resource share-link grants live in `share_link:{token}`
+//         tuples, not in `capability:{uid}` tuples; no backend code
+//         writes `capability:<...>` tuples, so emitting the label
+//         would produce an FGA subject with no possible match.
+//       - `capability` is an auth-mechanism signal ("how did this
+//         request authenticate?"), not an identity class ("who is
+//         asking?"). Keeping the two orthogonal avoids conflating
+//         token-holders with anonymous visitors in the FGA schema.
+//     Callers that need to honour a capability token must read
+//     `Instill-Capability-Token-Uid` and call CheckShareLinkPermission
+//     explicitly.
 //
 //  3. Otherwise, no usable identity was found. Returning an error
 //     here preserves the long-standing "empty subject = unauthenticated"
@@ -475,10 +492,10 @@ func resolveACLSubject(ctx context.Context) (userType, userUID string, err error
 		if visitorUID == "" {
 			return "", "", fmt.Errorf("%w: userUID is empty in check permission", errorsx.ErrUnauthenticated)
 		}
-		// Rule (2): preserve the visitor/capability FGA subject type
-		// so existing tuples (e.g. visitor-owned chats, share_link
-		// tokens) keep resolving.
-		return authType, visitorUID, nil
+		// Rule (2): collapse both labels to `visitor`. The FGA schema
+		// only defines `user` and `visitor` identity types; capability
+		// tokens are handled separately via CheckShareLinkPermission.
+		return "visitor", visitorUID, nil
 	}
 
 	// Rule (3): no recognizable identity header. The upstream "user"
@@ -957,6 +974,80 @@ func (c *ACLClient) CheckShareLinkPermission(ctx context.Context, shareToken str
 	}
 
 	return data.Allowed, nil
+}
+
+// CheckPermissionWithShareLink evaluates a permission using BOTH the
+// caller's identity AND (optionally) a share-link capability token,
+// returning true if either subject grants the requested relation.
+//
+// Why two subjects
+// ----------------
+// The FGA schema models shareable resources as a single authoritative
+// relation graph: e.g. `file.viewer` admits both direct identity
+// grants (`user`, `user:*`, `visitor:*`) and share-link grants
+// (`share_link`), and composite resources (collection, project,
+// chat, ...) delegate inheritance (e.g. `file.viewer = ... or viewer
+// from parent_collection`). A single CheckPermission call targets
+// exactly one FGA subject, so a request that authenticates with BOTH
+// a visitor cookie AND a share-link cap-token can only exercise ONE
+// side of the graph per call. Making callers do two checks by hand
+// has caused real bugs — most visibly artifact-backend-ee's linked
+// -file download path, which checked only the visitor subject and
+// silently 404'd every valid share-link download even though the
+// FGA `file.viewer → viewer from parent_collection → share_link:<T>`
+// chain resolved true.
+//
+// Semantics
+// ---------
+//  1. Always run the identity check first (same as CheckPermission).
+//     If it grants, return (true, nil) immediately — no extra FGA
+//     round-trip.
+//  2. If shareToken is empty, return the identity result as-is
+//     (including its error). This makes the helper a drop-in
+//     replacement for CheckPermission on code paths that may or may
+//     not have a cap-token: callers don't have to branch on
+//     "do I have a token?" before choosing which ACL method to call.
+//  3. Otherwise, run CheckShareLinkPermission. If the share-link
+//     check errors, return that error (it represents an actual FGA
+//     failure, not a "no grant" — which is already a clean
+//     `(false, nil)`). If it grants, return (true, nil). Otherwise
+//     return `(false, nil)` — a clean "denied" regardless of whether
+//     the identity check earlier produced an ErrUnauthenticated,
+//     because for a cap-token-bearing request the absence of a
+//     visitor UID is not a 401 condition; the cap-token itself IS
+//     the authentication.
+//
+// Scope isolation guarantee
+// -------------------------
+// Per-resource cap-token isolation is preserved for free: a
+// share_link tuple is written only for the specific resource the
+// token was minted for (e.g. `share_link:<TA> viewer collection:A`),
+// so `CheckPermission(file:F, share_link:<TA>)` resolves true only
+// if `file:F` inherits from `collection:A` (via its own
+// `parent_collection` tuples). A cap-token for A cannot unlock
+// files parented to B.
+//
+// Caller responsibility
+// ---------------------
+// Callers must extract `shareToken` from their domain-specific
+// header (x-ee's HeaderCapabilityTokenUIDKey) and pass it here. The
+// x library deliberately avoids the EE-header dependency so the
+// two packages do not cycle.
+func (c *ACLClient) CheckPermissionWithShareLink(
+	ctx context.Context, objectType string, objectUID uuid.UUID, relation string, shareToken string,
+) (bool, error) {
+	granted, identityErr := c.CheckPermission(ctx, objectType, objectUID, relation)
+	if identityErr == nil && granted {
+		return true, nil
+	}
+	if shareToken == "" {
+		return false, identityErr
+	}
+	granted2, shareErr := c.CheckShareLinkPermission(ctx, shareToken, objectType, objectUID, relation)
+	if shareErr != nil {
+		return false, shareErr
+	}
+	return granted2, nil
 }
 
 // CheckRequesterPermission validates namespace delegation: when a user
