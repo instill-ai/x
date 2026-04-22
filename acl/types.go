@@ -61,8 +61,14 @@ const (
 	RoleMember Role = "member"
 )
 
-// PermissionCachePrefix is the Redis key prefix for permission cache entries.
+// PermissionCachePrefix is the Redis key prefix for CheckPermission cache entries.
 const PermissionCachePrefix = "acl:perm:"
+
+// ListPermissionsCachePrefix is the Redis key prefix for ListPermissions cache entries.
+// Stored separately from CheckPermission because the cache key shape differs:
+// CheckPermission is keyed per (user, object, role); ListPermissions is keyed
+// per (user, objectType, role) and stores a list of object UIDs.
+const ListPermissionsCachePrefix = "acl:list:"
 
 type contextKeyType string
 

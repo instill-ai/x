@@ -1585,3 +1585,831 @@ func TestGetAuthorizationModelID_EmptyReturnsError(t *testing.T) {
 		t.Fatal("empty model ID should return error")
 	}
 }
+
+// ============================================================
+// ListPermissions — Redis cache
+// ============================================================
+
+func TestListPermissions_CacheHitSkipsFGA(t *testing.T) {
+	uid1 := uuid.Must(uuid.NewV4())
+	uid2 := uuid.Must(uuid.NewV4())
+	fgaCalls := 0
+
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			return &mockStream{
+				items: []*openfga.StreamedListObjectsResponse{
+					{Object: fmt.Sprintf("file:%s", uid1)},
+					{Object: fmt.Sprintf("file:%s", uid2)},
+				},
+			}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	ctx := userCtx(testUserUID)
+
+	// First call: cache miss, hits FGA
+	uids, err := c.ListPermissions(ctx, "file", "can_read_file")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(uids) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(uids))
+	}
+	if fgaCalls != 1 {
+		t.Fatalf("expected 1 FGA call, got %d", fgaCalls)
+	}
+
+	// Second call: cache hit, no FGA call
+	uids, err = c.ListPermissions(ctx, "file", "can_read_file")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(uids) != 2 {
+		t.Fatalf("expected 2 cached results, got %d", len(uids))
+	}
+	if fgaCalls != 1 {
+		t.Errorf("expected no additional FGA call (should be cached), got %d total", fgaCalls)
+	}
+}
+
+func TestListPermissions_CacheEmptyResult(t *testing.T) {
+	fgaCalls := 0
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			return &mockStream{items: nil}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	ctx := userCtx(testUserUID)
+
+	// Empty results should also be cached
+	uids, _ := c.ListPermissions(ctx, "file", "can_read_file")
+	if len(uids) != 0 {
+		t.Fatalf("expected 0 results, got %d", len(uids))
+	}
+
+	uids, _ = c.ListPermissions(ctx, "file", "can_read_file")
+	if len(uids) != 0 {
+		t.Fatalf("expected 0 cached results, got %d", len(uids))
+	}
+	if fgaCalls != 1 {
+		t.Errorf("empty result should be cached: expected 1 FGA call, got %d", fgaCalls)
+	}
+}
+
+func TestListPermissions_ForceConsistencyBypassesCache(t *testing.T) {
+	fgaCalls := 0
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			return &mockStream{items: nil}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	ctx := userCtx(testUserUID)
+
+	// Populate cache
+	_, _ = c.ListPermissions(ctx, "file", "can_read_file")
+
+	// Force consistency should bypass cache
+	ctxForce := context.WithValue(ctx, ContextKeyForceHigherConsistency, true)
+	_, err := c.ListPermissions(ctxForce, "file", "can_read_file")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fgaCalls != 2 {
+		t.Errorf("force consistency should bypass cache: expected 2 FGA calls, got %d", fgaCalls)
+	}
+}
+
+func TestListPermissions_PinnedUserBypassesCache(t *testing.T) {
+	fgaCalls := 0
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			return &mockStream{items: nil}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	c.config.Replica.ReplicationTimeFrame = 30
+	ctx := userCtx(testUserUID)
+
+	// Populate cache
+	_, _ = c.ListPermissions(ctx, "file", "can_read_file")
+
+	// Pin the user
+	c.PinUserForConsistency(ctx)
+
+	// Pinned user should bypass cache
+	_, err := c.ListPermissions(ctx, "file", "can_read_file")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fgaCalls != 2 {
+		t.Errorf("pinned user should bypass cache: expected 2 FGA calls, got %d", fgaCalls)
+	}
+}
+
+func TestSetResourcePermission_InvalidatesListPermissionsCache(t *testing.T) {
+	fgaCalls := 0
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			return &mockStream{items: nil}, nil
+		},
+		writeFn: func(_ context.Context, _ *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			return &openfga.WriteResponse{}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	ctx := userCtx(testUserUID)
+
+	// Populate cache
+	_, _ = c.ListPermissions(ctx, "file", "can_read_file")
+	if fgaCalls != 1 {
+		t.Fatalf("expected 1 FGA call after first list, got %d", fgaCalls)
+	}
+
+	// Grant permission to the same user — should invalidate their list cache
+	_ = c.SetResourcePermission(context.Background(), "file", testObjectUID, "user:"+testUserUID, "reader", true)
+
+	// Next list should hit FGA again (cache invalidated)
+	_, _ = c.ListPermissions(ctx, "file", "can_read_file")
+	if fgaCalls != 2 {
+		t.Errorf("after SetResourcePermission, cache should be invalidated: expected 2 FGA calls, got %d", fgaCalls)
+	}
+}
+
+func TestSetPublicPermission_InvalidatesAllListPermissionsCache(t *testing.T) {
+	fgaCalls := 0
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			return &mockStream{items: nil}, nil
+		},
+		writeFn: func(_ context.Context, _ *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			return &openfga.WriteResponse{}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	ctx := userCtx(testUserUID)
+
+	// Populate cache for user
+	_, _ = c.ListPermissions(ctx, "knowledgebase", "reader")
+	if fgaCalls != 1 {
+		t.Fatalf("expected 1 FGA call, got %d", fgaCalls)
+	}
+
+	// Set public permission — should invalidate all list caches for this object type
+	_ = c.SetPublicPermission(context.Background(), "knowledgebase", testObjectUID)
+
+	// Next list should hit FGA again
+	_, _ = c.ListPermissions(ctx, "knowledgebase", "reader")
+	if fgaCalls != 2 {
+		t.Errorf("after SetPublicPermission, all list caches should be invalidated: expected 2 FGA calls, got %d", fgaCalls)
+	}
+}
+
+func TestListPermissions_NoCacheWithoutRedis(t *testing.T) {
+	fgaCalls := 0
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			return &mockStream{items: nil}, nil
+		},
+	}
+	c := newTestClient(fga)
+	ctx := userCtx(testUserUID)
+
+	_, _ = c.ListPermissions(ctx, "file", "can_read_file")
+	_, _ = c.ListPermissions(ctx, "file", "can_read_file")
+
+	if fgaCalls != 2 {
+		t.Errorf("without Redis, every call should hit FGA: expected 2, got %d", fgaCalls)
+	}
+}
+
+func TestListPermissionsCacheKey_Format(t *testing.T) {
+	key := listPermissionsCacheKey("user", testUserUID, "file", "can_read_file")
+	expected := fmt.Sprintf("acl:list:user:%s:file:can_read_file", testUserUID)
+	if key != expected {
+		t.Errorf("cache key mismatch:\n  got:  %s\n  want: %s", key, expected)
+	}
+}
+
+func TestListPermissions_DifferentUsersCacheIndependently(t *testing.T) {
+	userA := "aaaa-aaaa-aaaa-aaaa"
+	userB := "bbbb-bbbb-bbbb-bbbb"
+	uidForA := uuid.Must(uuid.NewV4())
+	uidForB := uuid.Must(uuid.NewV4())
+
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, req *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			if req.User == fmt.Sprintf("user:%s", userA) {
+				return &mockStream{items: []*openfga.StreamedListObjectsResponse{
+					{Object: fmt.Sprintf("file:%s", uidForA)},
+				}}, nil
+			}
+			return &mockStream{items: []*openfga.StreamedListObjectsResponse{
+				{Object: fmt.Sprintf("file:%s", uidForB)},
+			}}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+
+	uidsA, _ := c.ListPermissions(userCtx(userA), "file", "reader")
+	uidsB, _ := c.ListPermissions(userCtx(userB), "file", "reader")
+
+	if len(uidsA) != 1 || uidsA[0] != uidForA {
+		t.Errorf("user A should see uidForA, got %v", uidsA)
+	}
+	if len(uidsB) != 1 || uidsB[0] != uidForB {
+		t.Errorf("user B should see uidForB, got %v", uidsB)
+	}
+}
+
+func TestListPermissions_DifferentObjectTypesAndRolesCacheIndependently(t *testing.T) {
+	fgaCalls := 0
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			return &mockStream{items: nil}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	ctx := userCtx(testUserUID)
+
+	_, _ = c.ListPermissions(ctx, "file", "can_read_file")
+	_, _ = c.ListPermissions(ctx, "collection", "reader")
+	_, _ = c.ListPermissions(ctx, "file", "writer")
+
+	if fgaCalls != 3 {
+		t.Errorf("different objectType/role combos should each hit FGA: expected 3, got %d", fgaCalls)
+	}
+
+	// Repeat all three — all should be cached
+	_, _ = c.ListPermissions(ctx, "file", "can_read_file")
+	_, _ = c.ListPermissions(ctx, "collection", "reader")
+	_, _ = c.ListPermissions(ctx, "file", "writer")
+
+	if fgaCalls != 3 {
+		t.Errorf("repeated calls should all hit cache: expected 3 total, got %d", fgaCalls)
+	}
+}
+
+func TestListPublicPermissions_UsesCacheWithWildcardSubject(t *testing.T) {
+	fgaCalls := 0
+	uid1 := uuid.Must(uuid.NewV4())
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, req *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			if req.User != "user:*" {
+				t.Errorf("ListPublicPermissions should query as user:*, got %s", req.User)
+			}
+			return &mockStream{items: []*openfga.StreamedListObjectsResponse{
+				{Object: fmt.Sprintf("collection:%s", uid1)},
+			}}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	ctx := userCtx(testUserUID)
+
+	uids, _ := c.ListPublicPermissions(ctx, "collection", "reader")
+	if len(uids) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(uids))
+	}
+
+	// Second call should use cache
+	uids, _ = c.ListPublicPermissions(ctx, "collection", "reader")
+	if fgaCalls != 1 {
+		t.Errorf("ListPublicPermissions should use cache on second call: expected 1 FGA call, got %d", fgaCalls)
+	}
+	if len(uids) != 1 || uids[0] != uid1 {
+		t.Errorf("cached result should match original, got %v", uids)
+	}
+}
+
+func TestDeleteResourcePermission_InvalidatesListPermissionsCache(t *testing.T) {
+	fgaCalls := 0
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			return &mockStream{items: nil}, nil
+		},
+		writeFn: func(_ context.Context, _ *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			return &openfga.WriteResponse{}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	ctx := userCtx(testUserUID)
+
+	// Populate cache
+	_, _ = c.ListPermissions(ctx, "file", "can_read_file")
+
+	// Delete permission — should invalidate cache
+	_ = c.DeleteResourcePermission(context.Background(), "file", testObjectUID, "user:"+testUserUID)
+
+	_, _ = c.ListPermissions(ctx, "file", "can_read_file")
+	if fgaCalls != 2 {
+		t.Errorf("after DeleteResourcePermission, cache should be invalidated: expected 2 FGA calls, got %d", fgaCalls)
+	}
+}
+
+func TestPurge_InvalidatesListPermissionsCache(t *testing.T) {
+	fgaCalls := 0
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			return &mockStream{items: nil}, nil
+		},
+		readFn: func(_ context.Context, _ *openfga.ReadRequest) (*openfga.ReadResponse, error) {
+			return &openfga.ReadResponse{Tuples: []*openfga.Tuple{}}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	ctx := userCtx(testUserUID)
+
+	// Populate cache
+	_, _ = c.ListPermissions(ctx, "file", "can_read_file")
+
+	// Purge — should invalidate all list caches for this object type
+	_ = c.Purge(context.Background(), "file", testObjectUID)
+
+	_, _ = c.ListPermissions(ctx, "file", "can_read_file")
+	if fgaCalls != 2 {
+		t.Errorf("after Purge, cache should be invalidated: expected 2 FGA calls, got %d", fgaCalls)
+	}
+}
+
+func TestListPermissions_FGAErrorNotCached(t *testing.T) {
+	fgaCalls := 0
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			if fgaCalls == 1 {
+				return nil, fmt.Errorf("FGA unavailable")
+			}
+			return &mockStream{items: nil}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	ctx := userCtx(testUserUID)
+
+	// First call fails — should NOT be cached
+	_, err := c.ListPermissions(ctx, "file", "can_read_file")
+	if err == nil {
+		t.Fatal("expected error from FGA")
+	}
+
+	// Second call should hit FGA again (error was not cached)
+	_, err = c.ListPermissions(ctx, "file", "can_read_file")
+	if err != nil {
+		t.Fatalf("second call should succeed: %v", err)
+	}
+	if fgaCalls != 2 {
+		t.Errorf("FGA error should not be cached: expected 2 FGA calls, got %d", fgaCalls)
+	}
+}
+
+func TestListPermissions_CachedUIDsMatchOriginal(t *testing.T) {
+	uid1 := uuid.Must(uuid.FromString("11111111-1111-1111-1111-111111111111"))
+	uid2 := uuid.Must(uuid.FromString("22222222-2222-2222-2222-222222222222"))
+	uid3 := uuid.Must(uuid.FromString("33333333-3333-3333-3333-333333333333"))
+
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			return &mockStream{
+				items: []*openfga.StreamedListObjectsResponse{
+					{Object: fmt.Sprintf("file:%s", uid1)},
+					{Object: fmt.Sprintf("file:%s", uid2)},
+					{Object: fmt.Sprintf("file:%s", uid3)},
+				},
+			}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	ctx := userCtx(testUserUID)
+
+	// Populate cache
+	_, _ = c.ListPermissions(ctx, "file", "reader")
+
+	// Read from cache and verify exact content + order
+	cached, err := c.ListPermissions(ctx, "file", "reader")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := []uuid.UUID{uid1, uid2, uid3}
+	if len(cached) != len(expected) {
+		t.Fatalf("expected %d UIDs, got %d", len(expected), len(cached))
+	}
+	for i, u := range cached {
+		if u != expected[i] {
+			t.Errorf("UID[%d]: expected %s, got %s", i, expected[i], u)
+		}
+	}
+}
+
+func TestSetResourcePermission_OnlyInvalidatesTargetUser(t *testing.T) {
+	userA := testUserUID
+	userB := "bbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	fgaCalls := 0
+
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			return &mockStream{items: nil}, nil
+		},
+		writeFn: func(_ context.Context, _ *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			return &openfga.WriteResponse{}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+
+	// Populate cache for both users
+	_, _ = c.ListPermissions(userCtx(userA), "file", "can_read_file")
+	_, _ = c.ListPermissions(userCtx(userB), "file", "can_read_file")
+	if fgaCalls != 2 {
+		t.Fatalf("expected 2 FGA calls, got %d", fgaCalls)
+	}
+
+	// Grant permission to User B only
+	_ = c.SetResourcePermission(context.Background(), "file", testObjectUID, "user:"+userB, "reader", true)
+
+	// User A's cache should still be valid (no FGA call)
+	_, _ = c.ListPermissions(userCtx(userA), "file", "can_read_file")
+	if fgaCalls != 2 {
+		t.Errorf("user A's cache should not be invalidated by granting to user B: expected 2 FGA calls, got %d", fgaCalls)
+	}
+
+	// User B's cache should be invalidated (triggers new FGA call)
+	_, _ = c.ListPermissions(userCtx(userB), "file", "can_read_file")
+	if fgaCalls != 3 {
+		t.Errorf("user B's cache should be invalidated after grant: expected 3 FGA calls, got %d", fgaCalls)
+	}
+}
+
+func TestSetPublicPermission_InvalidatesMultipleUsersCaches(t *testing.T) {
+	userA := testUserUID
+	userB := "bbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	fgaCalls := 0
+
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			return &mockStream{items: nil}, nil
+		},
+		writeFn: func(_ context.Context, _ *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			return &openfga.WriteResponse{}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+
+	// Populate cache for user A, user B, and a visitor
+	_, _ = c.ListPermissions(userCtx(userA), "file", "reader")
+	_, _ = c.ListPermissions(userCtx(userB), "file", "reader")
+	_, _ = c.ListPermissions(visitorCtx(testVisitorUID), "file", "reader")
+	if fgaCalls != 3 {
+		t.Fatalf("expected 3 FGA calls, got %d", fgaCalls)
+	}
+
+	// Set public permission on file — wildcard grant affects everyone
+	_ = c.SetPublicPermission(context.Background(), "file", testObjectUID)
+
+	// All three caches should be invalidated
+	_, _ = c.ListPermissions(userCtx(userA), "file", "reader")
+	_, _ = c.ListPermissions(userCtx(userB), "file", "reader")
+	_, _ = c.ListPermissions(visitorCtx(testVisitorUID), "file", "reader")
+	if fgaCalls != 6 {
+		t.Errorf("SetPublicPermission should invalidate all users' caches: expected 6 FGA calls, got %d", fgaCalls)
+	}
+}
+
+func TestDeletePublicPermission_InvalidatesAllUsersCaches(t *testing.T) {
+	fgaCalls := 0
+
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			return &mockStream{items: nil}, nil
+		},
+		writeFn: func(_ context.Context, _ *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			return &openfga.WriteResponse{}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+
+	// Populate cache
+	_, _ = c.ListPermissions(userCtx(testUserUID), "collection", "reader")
+	if fgaCalls != 1 {
+		t.Fatalf("expected 1 FGA call, got %d", fgaCalls)
+	}
+
+	// Revoke public access
+	_ = c.DeletePublicPermission(context.Background(), "collection", testObjectUID)
+
+	// Cache should be invalidated
+	_, _ = c.ListPermissions(userCtx(testUserUID), "collection", "reader")
+	if fgaCalls != 2 {
+		t.Errorf("DeletePublicPermission should invalidate caches: expected 2, got %d", fgaCalls)
+	}
+}
+
+// TestSetResourcePermission_InvalidatesAllObjectTypesForUser verifies that
+// per-user invalidation clears all objectType caches for that user, not just
+// the objectType being modified. This is intentional: FGA graph resolution
+// can cross object types (e.g., collection viewer → file viewer via
+// parent_collection), so a grant on "file" can affect the user's resolved
+// "collection" permissions. Broad per-user invalidation is the safe default.
+func TestSetResourcePermission_InvalidatesAllObjectTypesForUser(t *testing.T) {
+	fgaCalls := 0
+
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			return &mockStream{items: nil}, nil
+		},
+		writeFn: func(_ context.Context, _ *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			return &openfga.WriteResponse{}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	ctx := userCtx(testUserUID)
+
+	// Populate cache for both file and collection
+	_, _ = c.ListPermissions(ctx, "file", "can_read_file")
+	_, _ = c.ListPermissions(ctx, "collection", "reader")
+	if fgaCalls != 2 {
+		t.Fatalf("expected 2 FGA calls, got %d", fgaCalls)
+	}
+
+	// Grant file permission — per-user invalidation clears ALL of this user's caches
+	_ = c.SetResourcePermission(context.Background(), "file", testObjectUID, "user:"+testUserUID, "reader", true)
+
+	// Both caches should be invalidated (broad user-level invalidation)
+	_, _ = c.ListPermissions(ctx, "file", "can_read_file")
+	_, _ = c.ListPermissions(ctx, "collection", "reader")
+	if fgaCalls != 4 {
+		t.Errorf("per-user invalidation should clear all object types: expected 4 FGA calls, got %d", fgaCalls)
+	}
+}
+
+func TestPurge_DoesNotInvalidateOtherObjectTypes(t *testing.T) {
+	fgaCalls := 0
+
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			return &mockStream{items: nil}, nil
+		},
+		readFn: func(_ context.Context, _ *openfga.ReadRequest) (*openfga.ReadResponse, error) {
+			return &openfga.ReadResponse{Tuples: []*openfga.Tuple{}}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	ctx := userCtx(testUserUID)
+
+	// Populate cache for file and collection
+	_, _ = c.ListPermissions(ctx, "file", "reader")
+	_, _ = c.ListPermissions(ctx, "collection", "reader")
+	if fgaCalls != 2 {
+		t.Fatalf("expected 2 FGA calls, got %d", fgaCalls)
+	}
+
+	// Purge a file object — should only invalidate file caches
+	_ = c.Purge(context.Background(), "file", testObjectUID)
+
+	// Collection cache should still be valid
+	_, _ = c.ListPermissions(ctx, "collection", "reader")
+	if fgaCalls != 2 {
+		t.Errorf("purge file should not invalidate collection cache: expected 2, got %d", fgaCalls)
+	}
+
+	// File cache should be invalidated
+	_, _ = c.ListPermissions(ctx, "file", "reader")
+	if fgaCalls != 3 {
+		t.Errorf("file cache should be invalidated: expected 3, got %d", fgaCalls)
+	}
+}
+
+func TestDeleteResourcePermission_OnlyInvalidatesTargetUser(t *testing.T) {
+	userA := testUserUID
+	userB := "bbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	fgaCalls := 0
+
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			return &mockStream{items: nil}, nil
+		},
+		writeFn: func(_ context.Context, _ *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			return &openfga.WriteResponse{}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+
+	// Populate cache for both users
+	_, _ = c.ListPermissions(userCtx(userA), "file", "reader")
+	_, _ = c.ListPermissions(userCtx(userB), "file", "reader")
+	if fgaCalls != 2 {
+		t.Fatalf("expected 2 FGA calls, got %d", fgaCalls)
+	}
+
+	// Delete permission for User B
+	_ = c.DeleteResourcePermission(context.Background(), "file", testObjectUID, "user:"+userB)
+
+	// User A's cache should still be valid
+	_, _ = c.ListPermissions(userCtx(userA), "file", "reader")
+	if fgaCalls != 2 {
+		t.Errorf("user A cache should be preserved after deleting user B's permission: expected 2, got %d", fgaCalls)
+	}
+
+	// User B's cache should be invalidated
+	_, _ = c.ListPermissions(userCtx(userB), "file", "reader")
+	if fgaCalls != 3 {
+		t.Errorf("user B cache should be invalidated: expected 3, got %d", fgaCalls)
+	}
+}
+
+func TestSetPublicPermission_DoesNotInvalidateOtherObjectTypes(t *testing.T) {
+	fgaCalls := 0
+
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			return &mockStream{items: nil}, nil
+		},
+		writeFn: func(_ context.Context, _ *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			return &openfga.WriteResponse{}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	ctx := userCtx(testUserUID)
+
+	// Populate cache for file and collection
+	_, _ = c.ListPermissions(ctx, "file", "reader")
+	_, _ = c.ListPermissions(ctx, "collection", "reader")
+	if fgaCalls != 2 {
+		t.Fatalf("expected 2 FGA calls, got %d", fgaCalls)
+	}
+
+	// Set public permission on collection — should invalidate collection caches only
+	_ = c.SetPublicPermission(context.Background(), "collection", testObjectUID)
+
+	// File cache should still be valid
+	_, _ = c.ListPermissions(ctx, "file", "reader")
+	if fgaCalls != 2 {
+		t.Errorf("file cache should be preserved after SetPublicPermission on collection: expected 2, got %d", fgaCalls)
+	}
+
+	// Collection cache should be invalidated
+	_, _ = c.ListPermissions(ctx, "collection", "reader")
+	if fgaCalls != 3 {
+		t.Errorf("collection cache should be invalidated: expected 3, got %d", fgaCalls)
+	}
+}
+
+func TestDeletePublicPermission_DoesNotInvalidateOtherObjectTypes(t *testing.T) {
+	fgaCalls := 0
+
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			return &mockStream{items: nil}, nil
+		},
+		writeFn: func(_ context.Context, _ *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			return &openfga.WriteResponse{}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	ctx := userCtx(testUserUID)
+
+	// Populate cache for file and collection
+	_, _ = c.ListPermissions(ctx, "file", "reader")
+	_, _ = c.ListPermissions(ctx, "collection", "reader")
+	if fgaCalls != 2 {
+		t.Fatalf("expected 2 FGA calls, got %d", fgaCalls)
+	}
+
+	// Delete public permission on collection
+	_ = c.DeletePublicPermission(context.Background(), "collection", testObjectUID)
+
+	// File cache should still be valid
+	_, _ = c.ListPermissions(ctx, "file", "reader")
+	if fgaCalls != 2 {
+		t.Errorf("file cache should be preserved after DeletePublicPermission on collection: expected 2, got %d", fgaCalls)
+	}
+
+	// Collection cache should be invalidated
+	_, _ = c.ListPermissions(ctx, "collection", "reader")
+	if fgaCalls != 3 {
+		t.Errorf("collection cache should be invalidated: expected 3, got %d", fgaCalls)
+	}
+}
+
+func TestSetOwner_InvalidatesNewOwnerCache(t *testing.T) {
+	ownerUID := uuid.Must(uuid.FromString(testUserUID))
+	otherUser := "cccc-cccc-cccc-cccc-cccccccccccc"
+	fgaCalls := 0
+
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
+			return &mockStream{items: nil}, nil
+		},
+		readFn: func(_ context.Context, _ *openfga.ReadRequest) (*openfga.ReadResponse, error) {
+			return &openfga.ReadResponse{Tuples: []*openfga.Tuple{}}, nil
+		},
+		writeFn: func(_ context.Context, _ *openfga.WriteRequest) (*openfga.WriteResponse, error) {
+			return &openfga.WriteResponse{}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+
+	// Populate cache for the owner and another user
+	_, _ = c.ListPermissions(userCtx(testUserUID), "pipeline", "reader")
+	_, _ = c.ListPermissions(userCtx(otherUser), "pipeline", "reader")
+	if fgaCalls != 2 {
+		t.Fatalf("expected 2 FGA calls, got %d", fgaCalls)
+	}
+
+	// Set owner — should invalidate the new owner's cache
+	_ = c.SetOwner(context.Background(), "pipeline", testObjectUID, "user", ownerUID)
+
+	// New owner's cache should be invalidated
+	_, _ = c.ListPermissions(userCtx(testUserUID), "pipeline", "reader")
+	if fgaCalls != 3 {
+		t.Errorf("new owner's cache should be invalidated: expected 3 FGA calls, got %d", fgaCalls)
+	}
+
+	// Other user's cache should still be valid
+	_, _ = c.ListPermissions(userCtx(otherUser), "pipeline", "reader")
+	if fgaCalls != 3 {
+		t.Errorf("other user's cache should be preserved: expected 3 FGA calls, got %d", fgaCalls)
+	}
+}
+
+func TestListPermissions_VisitorAndUserCacheIsolated(t *testing.T) {
+	uidForUser := uuid.Must(uuid.NewV4())
+	uidForVisitor := uuid.Must(uuid.NewV4())
+
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, req *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			if req.User == fmt.Sprintf("user:%s", testUserUID) {
+				return &mockStream{items: []*openfga.StreamedListObjectsResponse{
+					{Object: fmt.Sprintf("file:%s", uidForUser)},
+				}}, nil
+			}
+			return &mockStream{items: []*openfga.StreamedListObjectsResponse{
+				{Object: fmt.Sprintf("file:%s", uidForVisitor)},
+			}}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+
+	userUids, _ := c.ListPermissions(userCtx(testUserUID), "file", "reader")
+	visitorUids, _ := c.ListPermissions(visitorCtx(testVisitorUID), "file", "reader")
+
+	if len(userUids) != 1 || userUids[0] != uidForUser {
+		t.Errorf("user should see uidForUser, got %v", userUids)
+	}
+	if len(visitorUids) != 1 || visitorUids[0] != uidForVisitor {
+		t.Errorf("visitor should see uidForVisitor, got %v", visitorUids)
+	}
+
+	// Verify cached results are still isolated
+	userUids2, _ := c.ListPermissions(userCtx(testUserUID), "file", "reader")
+	visitorUids2, _ := c.ListPermissions(visitorCtx(testVisitorUID), "file", "reader")
+
+	if len(userUids2) != 1 || userUids2[0] != uidForUser {
+		t.Errorf("cached user result should still be uidForUser, got %v", userUids2)
+	}
+	if len(visitorUids2) != 1 || visitorUids2[0] != uidForVisitor {
+		t.Errorf("cached visitor result should still be uidForVisitor, got %v", visitorUids2)
+	}
+}
