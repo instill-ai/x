@@ -2,6 +2,7 @@ package acl
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -310,6 +311,76 @@ func (c *ACLClient) invalidateUserObjectCache(ctx context.Context, user, objectT
 	)
 }
 
+// listPermissionsCacheKey generates a Redis key for caching ListPermissions results.
+// The key encodes the caller identity (userType + UID), the object type, and the
+// relation so that different users / roles never collide.
+func listPermissionsCacheKey(userType, userUID, objectType, role string) string {
+	return fmt.Sprintf("%s%s:%s:%s:%s", ListPermissionsCachePrefix, userType, userUID, objectType, role)
+}
+
+// invalidateListPermissionsCache deletes all ListPermissions cache entries that
+// match the given pattern. This is called from every FGA write path so that
+// cached object-UID lists are refreshed after permission changes.
+//
+// Pattern examples:
+//
+//	"acl:list:user:abc-123:*"       — all list entries for a specific user
+//	"acl:list:*:file:*"             — all list entries for object type "file"
+//	"acl:list:*"                    — everything (nuclear option, not used)
+func (c *ACLClient) invalidateListPermissionsCache(ctx context.Context, pattern string) {
+	if !c.cacheEnabled || c.redisClient == nil {
+		return
+	}
+
+	log, _ := logx.GetZapLogger(ctx)
+	log.Debug("Invalidating ListPermissions cache", zap.String("pattern", pattern))
+
+	var cursor uint64
+	var deletedCount int
+	for {
+		var keys []string
+		var err error
+		keys, cursor, err = c.redisClient.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			log.Warn("Failed to scan list-permissions cache keys", zap.Error(err), zap.String("pattern", pattern))
+			return
+		}
+		if len(keys) > 0 {
+			if err := c.redisClient.Del(ctx, keys...).Err(); err != nil {
+				log.Warn("Failed to delete list-permissions cache keys", zap.Error(err), zap.Strings("keys", keys))
+			} else {
+				deletedCount += len(keys)
+			}
+		}
+		if cursor == 0 {
+			break
+		}
+	}
+
+	if deletedCount > 0 {
+		log.Debug("ListPermissions cache invalidation completed",
+			zap.String("pattern", pattern),
+			zap.Int("deletedKeys", deletedCount),
+		)
+	}
+}
+
+// invalidateListPermissionsCacheForUser invalidates all ListPermissions cache
+// entries for the given FGA user string (e.g. "user:abc-123" or "user:*").
+func (c *ACLClient) invalidateListPermissionsCacheForUser(ctx context.Context, user string) {
+	pattern := fmt.Sprintf("%s%s:*", ListPermissionsCachePrefix, user)
+	c.invalidateListPermissionsCache(ctx, pattern)
+}
+
+// invalidateListPermissionsCacheForObjectType invalidates all ListPermissions
+// cache entries for a given object type across all users. This is used when a
+// public permission change (user:* / visitor:*) alters the FGA graph for every
+// caller.
+func (c *ACLClient) invalidateListPermissionsCacheForObjectType(ctx context.Context, objectType string) {
+	pattern := fmt.Sprintf("%s*:%s:*", ListPermissionsCachePrefix, objectType)
+	c.invalidateListPermissionsCache(ctx, pattern)
+}
+
 // SetOwner sets the owner of a given object.
 func (c *ACLClient) SetOwner(ctx context.Context, objectType string, objectUID uuid.UUID, ownerType string, ownerUID uuid.UUID) error {
 	log, _ := logx.GetZapLogger(ctx)
@@ -369,6 +440,7 @@ func (c *ACLClient) SetOwner(ctx context.Context, objectType string, objectUID u
 
 	// Invalidate permission cache for the object
 	c.invalidateObjectCache(ctx, objectType, objectUID.String())
+	c.invalidateListPermissionsCacheForUser(ctx, fmt.Sprintf("%s:%s", ownerType, ownerUID.String()))
 
 	return nil
 }
@@ -388,6 +460,7 @@ func (c *ACLClient) Purge(ctx context.Context, objectType string, objectUID uuid
 
 	// Invalidate permission cache for the object
 	c.invalidateObjectCache(ctx, objectType, objectUID.String())
+	c.invalidateListPermissionsCacheForObjectType(ctx, objectType)
 
 	if len(data.Tuples) == 0 {
 		return nil
@@ -701,7 +774,14 @@ func (c *ACLClient) ListPublicPermissions(ctx context.Context, objectType string
 // and ListPublicPermissions (wildcard) can share the streaming,
 // consistency, and error-translation logic without each growing its
 // own copy that then drifts.
+//
+// Results are cached in Redis (when caching is enabled) to avoid
+// repeating the expensive StreamedListObjects call on every request.
+// The cache is bypassed when HIGHER_CONSISTENCY is required (context
+// flag or user-pin).
 func (c *ACLClient) listObjectsForSubject(ctx context.Context, objectType, role, userType, userUIDStr string) ([]uuid.UUID, error) {
+	log, _ := logx.GetZapLogger(ctx)
+
 	modelID, err := c.getAuthorizationModelID(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("getting authorization model: %w", err)
@@ -709,13 +789,41 @@ func (c *ACLClient) listObjectsForSubject(ctx context.Context, objectType, role,
 
 	// Use HIGHER_CONSISTENCY when the caller forced it via context (object-level
 	// visibility change) or when the user is pinned (per-user read-after-write).
+	forceConsistency := false
 	consistency := openfga.ConsistencyPreference_MINIMIZE_LATENCY
 	if forceHC, ok := ctx.Value(ContextKeyForceHigherConsistency).(bool); ok && forceHC {
+		forceConsistency = true
 		consistency = openfga.ConsistencyPreference_HIGHER_CONSISTENCY
 	} else if c.IsUserPinned(ctx) {
+		forceConsistency = true
 		consistency = openfga.ConsistencyPreference_HIGHER_CONSISTENCY
 	}
 
+	// --- Cache read ---
+	cacheKey := listPermissionsCacheKey(userType, userUIDStr, objectType, role)
+	if c.cacheEnabled && c.redisClient != nil && !forceConsistency {
+		cached, redisErr := c.redisClient.Get(ctx, cacheKey).Result()
+		if redisErr == nil {
+			var uidStrs []string
+			if jsonErr := json.Unmarshal([]byte(cached), &uidStrs); jsonErr == nil {
+				uids := make([]uuid.UUID, 0, len(uidStrs))
+				for _, s := range uidStrs {
+					uids = append(uids, uuid.FromStringOrNil(s))
+				}
+				log.Debug("ListPermissions cache hit",
+					zap.String("cacheKey", cacheKey),
+					zap.Int("count", len(uids)),
+				)
+				return uids, nil
+			} else {
+				log.Warn("ListPermissions cache unmarshal error, falling through to FGA", zap.Error(jsonErr))
+			}
+		} else if !errors.Is(redisErr, redis.Nil) {
+			log.Warn("ListPermissions cache read error", zap.Error(redisErr))
+		}
+	}
+
+	// --- FGA call ---
 	stream, err := c.getClient(ctx, ReadMode).StreamedListObjects(ctx, &openfga.StreamedListObjectsRequest{
 		StoreId:              c.storeID,
 		AuthorizationModelId: modelID,
@@ -743,6 +851,20 @@ func (c *ACLClient) listObjectsForSubject(ctx context.Context, objectType, role,
 			return nil, fmt.Errorf("receiving from stream: %w", err)
 		}
 		objectUIDs = append(objectUIDs, uuid.FromStringOrNil(strings.Split(resp.GetObject(), ":")[1]))
+	}
+
+	// --- Cache write ---
+	if c.cacheEnabled && c.redisClient != nil && !forceConsistency {
+		uidStrs := make([]string, len(objectUIDs))
+		for i, u := range objectUIDs {
+			uidStrs[i] = u.String()
+		}
+		data, jsonErr := json.Marshal(uidStrs)
+		if jsonErr == nil {
+			if err := c.redisClient.Set(ctx, cacheKey, data, c.cacheTTL).Err(); err != nil {
+				log.Warn("ListPermissions failed to cache result", zap.Error(err))
+			}
+		}
 	}
 
 	return objectUIDs, nil
@@ -809,6 +931,15 @@ func (c *ACLClient) SetResourcePermission(ctx context.Context, objectType string
 	// results for this specific user are immediately cleared
 	c.invalidateUserObjectCache(ctx, user, objectType, objectUID.String())
 
+	// Invalidate ListPermissions cache for the affected user.
+	// For wildcard subjects (user:* / visitor:*), invalidate by object type
+	// since every caller's list result may change.
+	if user == "user:*" || user == "visitor:*" {
+		c.invalidateListPermissionsCacheForObjectType(ctx, objectType)
+	} else {
+		c.invalidateListPermissionsCacheForUser(ctx, user)
+	}
+
 	// Pin the subject user to primary for read-after-write consistency.
 	// When user A grants permission to user B, we need to pin user B to primary
 	// so that user B's subsequent reads see the newly granted permission.
@@ -855,6 +986,13 @@ func (c *ACLClient) DeleteResourcePermission(ctx context.Context, objectType str
 	// Also invalidate user-specific cache to ensure any cached results
 	// for this specific user are immediately cleared
 	c.invalidateUserObjectCache(ctx, user, objectType, objectUID.String())
+
+	// Invalidate ListPermissions cache for the affected user.
+	if user == "user:*" || user == "visitor:*" {
+		c.invalidateListPermissionsCacheForObjectType(ctx, objectType)
+	} else {
+		c.invalidateListPermissionsCacheForUser(ctx, user)
+	}
 
 	return nil
 }
