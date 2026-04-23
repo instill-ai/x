@@ -892,16 +892,16 @@ func (c *ACLClient) listObjectsForSubject(ctx context.Context, objectType, role,
 	//     graphs with many transitively reachable objects), OR
 	//   - the result count is at or above the configured max
 	//
-	// On a hit we (a) refuse the cache write so the next read goes
-	// back to FGA and (b) increment the OTel counter
-	// `acl.list_objects_truncated` so on-call can alert. The partial
+	// On a hit we refuse the cache write so the next read goes back
+	// to FGA, and we emit a warn log carrying the stable token
+	// `acl.list_objects_truncated` so on-call can grep / alert in
+	// Cloud Logging without a separate metrics pipeline. The partial
 	// result is still returned to the caller — the alternative would
 	// break read paths that have legitimately small result sets but
 	// ran slowly under FGA load.
 	truncated := isLikelyTruncated(elapsed, len(objectUIDs), c.listObjectsCfg)
 	if truncated {
-		recordListObjectsTruncated(ctx, objectType, role)
-		log.Warn("StreamedListObjects result is likely truncated; refusing to cache",
+		log.Warn("acl.list_objects_truncated: StreamedListObjects result is likely truncated; refusing to cache",
 			zap.String("objectType", objectType),
 			zap.String("role", role),
 			zap.String("subject", fmt.Sprintf("%s:%s", userType, userUIDStr)),

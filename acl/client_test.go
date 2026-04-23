@@ -2539,11 +2539,12 @@ func TestIsLikelyTruncated_DefaultsFillFromZeroConfig(t *testing.T) {
 // Asserts the user-visible contract: (a) the partial result is still
 // returned to the caller, (b) no Redis cache entry is written, (c) a
 // follow-up ListPermissions hits FGA again instead of being served
-// from a poisoned cache. The OTel counter
-// (`acl.list_objects_truncated`) is fired as a side effect; we do not
-// assert on it here because the cache-miss-on-next-call behavior is
-// the actual stale-data-prevention contract — telemetry is the
-// alerting surface, not the contract surface.
+// from a poisoned cache. A `log.Warn` carrying the stable token
+// `acl.list_objects_truncated` fires as a side effect (greppable in
+// Cloud Logging on d0/prod where no metrics collector exists); we do
+// not assert on the log line here because the cache-miss-on-next-call
+// behavior is the actual stale-data-prevention contract — the log is
+// the alerting surface, not the contract surface.
 func TestListPermissions_TruncationGuard_DeadlineBranch_RefusesCacheWrite(t *testing.T) {
 	uid1 := uuid.Must(uuid.NewV4())
 
