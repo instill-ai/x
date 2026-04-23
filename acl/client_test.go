@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	openfga "github.com/openfga/api/proto/openfga/v1"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/instill-ai/x/constant"
 	errorsx "github.com/instill-ai/x/errors"
@@ -169,13 +170,15 @@ func newTestClientWithCache(fga *mockFGA) (*ACLClient, *miniredis.Miniredis) {
 	mr := miniredis.RunT(&testing.T{})
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	return &ACLClient{
-		writeClient:  fga,
-		readClient:   fga,
-		redisClient:  rc,
-		storeID:      testStoreID,
-		modelID:      testModelID,
-		cacheEnabled: true,
-		cacheTTL:     60 * time.Second,
+		writeClient:            fga,
+		readClient:             fga,
+		redisClient:            rc,
+		storeID:                testStoreID,
+		modelID:                testModelID,
+		cacheEnabled:           true, // CheckPermission cache
+		listPermissionsCacheOn: true, // ListPermissions / ListPublicPermissions cache
+		cacheTTL:               60 * time.Second,
+		listObjectsCfg:         DefaultListObjectsConfig(),
 	}, mr
 }
 
@@ -1528,13 +1531,42 @@ func TestSetOwner_ReadErrorPropagated(t *testing.T) {
 // Config
 // ============================================================
 
+// TestDefaultCacheConfig pins the post-cache-split contract:
+//   - CheckPermission Redis cache OFF by default. OpenFGA's own
+//     in-memory check cache (OPENFGA_CHECK_QUERY_CACHE_ENABLED) covers
+//     the hot path, so the extra Redis hop is wasted latency.
+//   - ListPermissions Redis cache ON by default. StreamedListObjects
+//     is graph-walking and seconds-slow under load, so caching the
+//     resolved object set in Redis is a measurable win even when the
+//     OpenFGA check cache is active.
+//   - TTL stays at 60s for both layers.
 func TestDefaultCacheConfig(t *testing.T) {
 	cfg := DefaultCacheConfig()
-	if !cfg.Enabled {
-		t.Error("default cache should be enabled")
+	if cfg.Enabled {
+		t.Error("default CheckPermission cache should be disabled (OpenFGA server cache suffices)")
+	}
+	if !cfg.ListPermissionsEnabled {
+		t.Error("default ListPermissions cache should be enabled (StreamedListObjects is expensive)")
 	}
 	if cfg.TTL != 60 {
 		t.Errorf("default TTL should be 60, got %d", cfg.TTL)
+	}
+}
+
+// TestDefaultListObjectsConfig pins the truncation-guard defaults
+// against the OpenFGA server defaults shipped in instill-core. If
+// either side moves, both must move together; otherwise the
+// truncation heuristic fires on the wrong threshold.
+func TestDefaultListObjectsConfig(t *testing.T) {
+	cfg := DefaultListObjectsConfig()
+	if cfg.Deadline != 3*time.Second {
+		t.Errorf("default deadline should be 3s (mirrors OPENFGA_LIST_OBJECTS_DEADLINE), got %v", cfg.Deadline)
+	}
+	if cfg.MaxResults != 1000 {
+		t.Errorf("default max results should be 1000 (mirrors OPENFGA_LIST_OBJECTS_MAX_RESULTS), got %d", cfg.MaxResults)
+	}
+	if cfg.Slack != 200*time.Millisecond {
+		t.Errorf("default slack should be 200ms (jitter absorber), got %v", cfg.Slack)
 	}
 }
 
@@ -2411,5 +2443,350 @@ func TestListPermissions_VisitorAndUserCacheIsolated(t *testing.T) {
 	}
 	if len(visitorUids2) != 1 || visitorUids2[0] != uidForVisitor {
 		t.Errorf("cached visitor result should still be uidForVisitor, got %v", visitorUids2)
+	}
+}
+
+// ============================================================
+// listObjectsForSubject — truncation guard
+// ============================================================
+
+// slowStream simulates a StreamedListObjects response that emits all
+// items synchronously but sleeps once before EOF. Used to push the
+// elapsed time across the deadline-Slack boundary so the truncation
+// heuristic fires deterministically without flaky wall-clock waits.
+type slowStream struct {
+	grpc.ClientStream
+	items    []*openfga.StreamedListObjectsResponse
+	pos      int
+	sleepEOF time.Duration
+	hasSlept bool
+}
+
+func (s *slowStream) Recv() (*openfga.StreamedListObjectsResponse, error) {
+	if s.pos >= len(s.items) {
+		if !s.hasSlept && s.sleepEOF > 0 {
+			s.hasSlept = true
+			time.Sleep(s.sleepEOF)
+		}
+		return nil, io.EOF
+	}
+	resp := s.items[s.pos]
+	s.pos++
+	return resp, nil
+}
+
+// TestIsLikelyTruncated_Matrix exercises the threshold heuristic
+// directly so the cache-write decision can be verified without
+// spinning a mock stream. The matrix covers each branch:
+//   - well below both ceilings → not truncated
+//   - elapsed within Slack of Deadline → truncated (deadline branch)
+//   - elapsed exactly at Deadline → truncated
+//   - returned >= MaxResults → truncated (max branch)
+//   - returned == MaxResults-1 with quick elapsed → not truncated
+//   - zero/empty config falls back to defaults
+func TestIsLikelyTruncated_Matrix(t *testing.T) {
+	cfg := ListObjectsConfig{
+		Deadline:   3 * time.Second,
+		MaxResults: 1000,
+		Slack:      200 * time.Millisecond,
+	}
+
+	cases := []struct {
+		name     string
+		elapsed  time.Duration
+		returned int
+		want     bool
+	}{
+		{"fast and small", 10 * time.Millisecond, 5, false},
+		{"slow but well under deadline", 1500 * time.Millisecond, 10, false},
+		{"within slack of deadline", 2900 * time.Millisecond, 10, true},
+		{"exactly at deadline", 3 * time.Second, 10, true},
+		{"max-results minus one", 50 * time.Millisecond, 999, false},
+		{"max-results exactly", 50 * time.Millisecond, 1000, true},
+		{"max-results plus one", 50 * time.Millisecond, 1001, true},
+		{"both branches fire", 2900 * time.Millisecond, 1000, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isLikelyTruncated(tc.elapsed, tc.returned, cfg)
+			if got != tc.want {
+				t.Errorf("isLikelyTruncated(elapsed=%v, returned=%d) = %v, want %v",
+					tc.elapsed, tc.returned, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestIsLikelyTruncated_DefaultsFillFromZeroConfig pins the zero-
+// config fallback so callers that pass an empty ListObjectsConfig
+// (e.g. unit tests, embedded-mode services) still get the correct
+// defaults applied to the heuristic.
+func TestIsLikelyTruncated_DefaultsFillFromZeroConfig(t *testing.T) {
+	if !isLikelyTruncated(3*time.Second, 0, ListObjectsConfig{}) {
+		t.Error("zero config should fall back to defaults; 3s elapsed must trip deadline branch")
+	}
+	if !isLikelyTruncated(0, 1000, ListObjectsConfig{}) {
+		t.Error("zero config should fall back to defaults; 1000 returned must trip max-results branch")
+	}
+	if isLikelyTruncated(10*time.Millisecond, 5, ListObjectsConfig{}) {
+		t.Error("zero config should fall back to defaults; fast & small must not flag")
+	}
+}
+
+// TestListPermissions_TruncationGuard_DeadlineBranch_RefusesCacheWrite
+// drives listObjectsForSubject through a mock stream that sleeps once
+// past the deadline-slack boundary so the elapsed-time branch fires.
+// Asserts: (a) the partial result is still returned to the caller,
+// (b) no Redis cache entry is written, (c) the truncation counter
+// increments by exactly one.
+func TestListPermissions_TruncationGuard_DeadlineBranch_RefusesCacheWrite(t *testing.T) {
+	uid1 := uuid.Must(uuid.NewV4())
+
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			return &slowStream{
+				items: []*openfga.StreamedListObjectsResponse{
+					{Object: fmt.Sprintf("file:%s", uid1)},
+				},
+				sleepEOF: 250 * time.Millisecond,
+			}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	c.listObjectsCfg = ListObjectsConfig{
+		Deadline:   200 * time.Millisecond,
+		MaxResults: 1000,
+		Slack:      0,
+	}
+
+	beforeCount := readTruncationCounter(t, "file", "reader")
+	uids, err := c.ListPermissions(userCtx(testUserUID), "file", "reader")
+	if err != nil {
+		t.Fatalf("partial result must still be returned, got error: %v", err)
+	}
+	if len(uids) != 1 || uids[0] != uid1 {
+		t.Errorf("partial result must include the items received before truncation, got %v", uids)
+	}
+
+	cacheKey := listPermissionsCacheKey("user", testUserUID, "file", "reader")
+	if mr.Exists(cacheKey) {
+		t.Error("truncated result must NOT be cached (cache key was written)")
+	}
+
+	afterCount := readTruncationCounter(t, "file", "reader")
+	if afterCount-beforeCount != 1 {
+		t.Errorf("truncation counter should increment by 1, got delta %v", afterCount-beforeCount)
+	}
+}
+
+// TestListPermissions_TruncationGuard_MaxResultsBranch covers the
+// other half of the heuristic: a fast stream that returns at least
+// MaxResults items must also be flagged as truncated and skip the
+// cache write. This is the branch that fires on workspaces with
+// thousands of files where the deadline is never approached but the
+// max-results ceiling is hit silently.
+func TestListPermissions_TruncationGuard_MaxResultsBranch(t *testing.T) {
+	maxResults := 5
+	items := make([]*openfga.StreamedListObjectsResponse, maxResults)
+	for i := 0; i < maxResults; i++ {
+		items[i] = &openfga.StreamedListObjectsResponse{
+			Object: fmt.Sprintf("file:%s", uuid.Must(uuid.NewV4())),
+		}
+	}
+
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			return &mockStream{items: items}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	c.listObjectsCfg = ListObjectsConfig{
+		Deadline:   3 * time.Second,
+		MaxResults: maxResults,
+		Slack:      200 * time.Millisecond,
+	}
+
+	beforeCount := readTruncationCounter(t, "file", "reader")
+	uids, err := c.ListPermissions(userCtx(testUserUID), "file", "reader")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(uids) != maxResults {
+		t.Errorf("expected %d items, got %d", maxResults, len(uids))
+	}
+
+	cacheKey := listPermissionsCacheKey("user", testUserUID, "file", "reader")
+	if mr.Exists(cacheKey) {
+		t.Error("max-results-capped result must NOT be cached")
+	}
+
+	afterCount := readTruncationCounter(t, "file", "reader")
+	if afterCount-beforeCount != 1 {
+		t.Errorf("truncation counter should increment by 1, got delta %v", afterCount-beforeCount)
+	}
+}
+
+// TestListPermissions_TruncationGuard_HappyPath_CachesAndDoesNotIncrement
+// covers the negative case: a stream that completes well below both
+// ceilings must populate the cache and leave the truncation counter
+// untouched. Without this test a misconfigured Deadline / MaxResults
+// (e.g. zero values) could silently turn every list call into a
+// truncation event and drop cache hit rate to 0.
+func TestListPermissions_TruncationGuard_HappyPath_CachesAndDoesNotIncrement(t *testing.T) {
+	uid1 := uuid.Must(uuid.NewV4())
+	uid2 := uuid.Must(uuid.NewV4())
+
+	fga := &mockFGA{
+		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			return &mockStream{items: []*openfga.StreamedListObjectsResponse{
+				{Object: fmt.Sprintf("file:%s", uid1)},
+				{Object: fmt.Sprintf("file:%s", uid2)},
+			}}, nil
+		},
+	}
+	c, mr := newTestClientWithCache(fga)
+	defer mr.Close()
+	c.listObjectsCfg = ListObjectsConfig{
+		Deadline:   3 * time.Second,
+		MaxResults: 1000,
+		Slack:      200 * time.Millisecond,
+	}
+
+	beforeCount := readTruncationCounter(t, "file", "reader")
+	uids, err := c.ListPermissions(userCtx(testUserUID), "file", "reader")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(uids) != 2 {
+		t.Errorf("expected 2 items, got %d", len(uids))
+	}
+
+	cacheKey := listPermissionsCacheKey("user", testUserUID, "file", "reader")
+	if !mr.Exists(cacheKey) {
+		t.Error("complete result must be cached")
+	}
+
+	afterCount := readTruncationCounter(t, "file", "reader")
+	if afterCount != beforeCount {
+		t.Errorf("truncation counter must not move on a complete response, got delta %v", afterCount-beforeCount)
+	}
+}
+
+// readTruncationCounter samples the listObjectsTruncatedTotal Prom
+// counter for the given (object_type, role) label set. Pulled into a
+// helper so the truncation tests do not need to import promtestutil
+// each time.
+func readTruncationCounter(t *testing.T, objectType, role string) float64 {
+	t.Helper()
+	return promtestutil.ToFloat64(listObjectsTruncatedTotal.WithLabelValues(objectType, role))
+}
+
+// ============================================================
+// ReadTuples — direct-grant lookup via OpenFGA Read API
+// ============================================================
+
+// TestReadTuples_PropagatesFilterAndReturnsTuples pins the basic
+// happy path: ReadTuples threads (Object, Relation, User) through to
+// the OpenFGA Read RPC verbatim and materialises the response into
+// the local ReadTuple shape. Direct-grant lookups for "who has
+// access to this file" rely on this single-page contract.
+func TestReadTuples_PropagatesFilterAndReturnsTuples(t *testing.T) {
+	objStr := fmt.Sprintf("file:%s", testObjectUID)
+	userStr := fmt.Sprintf("user:%s", testUserUID)
+
+	var seen *openfga.ReadRequest
+	fga := &mockFGA{
+		readFn: func(_ context.Context, req *openfga.ReadRequest) (*openfga.ReadResponse, error) {
+			seen = req
+			return &openfga.ReadResponse{
+				Tuples: []*openfga.Tuple{
+					{Key: &openfga.TupleKey{Object: objStr, Relation: "viewer", User: userStr}},
+				},
+			}, nil
+		},
+	}
+	c := newTestClient(fga)
+
+	got, err := c.ReadTuples(context.Background(), ReadTupleFilter{
+		Object:   objStr,
+		Relation: "viewer",
+		User:     "",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if seen == nil || seen.TupleKey == nil {
+		t.Fatal("Read RPC was not invoked")
+	}
+	if seen.TupleKey.Object != objStr || seen.TupleKey.Relation != "viewer" || seen.TupleKey.User != "" {
+		t.Errorf("filter must be forwarded verbatim, got object=%q relation=%q user=%q",
+			seen.TupleKey.Object, seen.TupleKey.Relation, seen.TupleKey.User)
+	}
+	if len(got) != 1 || got[0].Object != objStr || got[0].Relation != "viewer" || got[0].User != userStr {
+		t.Errorf("ReadTuple shape mismatch, got %+v", got)
+	}
+}
+
+// TestReadTuples_WalksContinuationToken pins the pagination
+// contract: when the OpenFGA Read response carries a non-empty
+// continuation token, ReadTuples must follow it transparently and
+// return the concatenated result. Callers building "list everyone
+// with direct access" UIs depend on this so they do not have to
+// reimplement paging at every call site (which is what the original
+// console-ee anti-pattern did at the SDK layer, just on the wrong
+// API).
+func TestReadTuples_WalksContinuationToken(t *testing.T) {
+	page := 0
+	fga := &mockFGA{
+		readFn: func(_ context.Context, req *openfga.ReadRequest) (*openfga.ReadResponse, error) {
+			page++
+			switch page {
+			case 1:
+				if req.ContinuationToken != "" {
+					t.Errorf("first page must send empty continuation token, got %q", req.ContinuationToken)
+				}
+				return &openfga.ReadResponse{
+					Tuples: []*openfga.Tuple{
+						{Key: &openfga.TupleKey{Object: "file:a", Relation: "viewer", User: "user:1"}},
+						{Key: &openfga.TupleKey{Object: "file:a", Relation: "viewer", User: "user:2"}},
+					},
+					ContinuationToken: "page-2-token",
+				}, nil
+			case 2:
+				if req.ContinuationToken != "page-2-token" {
+					t.Errorf("second page must echo continuation token, got %q", req.ContinuationToken)
+				}
+				return &openfga.ReadResponse{
+					Tuples: []*openfga.Tuple{
+						{Key: &openfga.TupleKey{Object: "file:a", Relation: "viewer", User: "user:3"}},
+					},
+					ContinuationToken: "",
+				}, nil
+			default:
+				t.Errorf("unexpected page %d (continuation token loop)", page)
+				return &openfga.ReadResponse{}, nil
+			}
+		},
+	}
+	c := newTestClient(fga)
+
+	got, err := c.ReadTuples(context.Background(), ReadTupleFilter{Object: "file:a"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if page != 2 {
+		t.Errorf("expected 2 Read calls (one per page), got %d", page)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 concatenated tuples, got %d", len(got))
+	}
+	wantUsers := []string{"user:1", "user:2", "user:3"}
+	for i, want := range wantUsers {
+		if got[i].User != want {
+			t.Errorf("tuple[%d].User = %q, want %q", i, got[i].User, want)
+		}
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	openfga "github.com/openfga/api/proto/openfga/v1"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/instill-ai/x/constant"
 	"github.com/instill-ai/x/resource"
@@ -41,6 +42,14 @@ type Client interface {
 	// ListPublicPermissions lists all objects of a type that are readable by
 	// everyone (tuples keyed to the FGA wildcard `user:*`).
 	ListPublicPermissions(ctx context.Context, objectType string, role string) ([]uuid.UUID, error)
+	// ReadTuples enumerates direct-grant tuples that match the given
+	// filter. Backed by the OpenFGA Read API, which is indexed,
+	// deadline-free, and not subject to the listObjectsDeadline /
+	// listObjectsMaxResults truncation that affects ListPermissions.
+	// Use this for "list everyone with direct access to X" / "list
+	// everything X has direct access to" lookups; use ListPermissions
+	// when you need transitively reachable objects via FGA rewrites.
+	ReadTuples(ctx context.Context, filter ReadTupleFilter) ([]ReadTuple, error)
 	// SetResourcePermission sets a permission for a user on any resource type.
 	SetResourcePermission(ctx context.Context, objectType string, objectUID uuid.UUID, user, role string, enable bool) error
 	// DeleteResourcePermission deletes all permissions for a user on a resource.
@@ -69,14 +78,16 @@ type Client interface {
 
 // ACLClient implements the Client interface with OpenFGA.
 type ACLClient struct {
-	writeClient  openfga.OpenFGAServiceClient
-	readClient   openfga.OpenFGAServiceClient
-	redisClient  *redis.Client
-	storeID      string
-	modelID      string // Cached authorization model ID - fetched once at startup
-	cacheEnabled bool
-	cacheTTL     time.Duration
-	config       Config
+	writeClient            openfga.OpenFGAServiceClient
+	readClient             openfga.OpenFGAServiceClient
+	redisClient            *redis.Client
+	storeID                string
+	modelID                string // Cached authorization model ID - fetched once at startup
+	cacheEnabled           bool   // Controls CheckPermission Redis cache
+	listPermissionsCacheOn bool   // Controls ListPermissions / ListPublicPermissions Redis cache
+	cacheTTL               time.Duration
+	listObjectsCfg         ListObjectsConfig // Truncation-guard thresholds for StreamedListObjects
+	config                 Config
 }
 
 // NewClient creates a new ACL client with the given configuration.
@@ -115,25 +126,33 @@ func NewClient(wc openfga.OpenFGAServiceClient, rc openfga.OpenFGAServiceClient,
 
 	// Configure permission caching
 	cacheEnabled := cfg.Cache.Enabled
+	listPermissionsCacheOn := cfg.Cache.ListPermissionsEnabled
 	cacheTTL := cfg.Cache.CacheTTLDuration()
+	listObjectsCfg := cfg.ListObjects.resolved()
 
 	log, _ := logx.GetZapLogger(context.Background())
 	log.Info("ACL client initialized",
 		zap.String("storeID", storeID),
 		zap.String("modelID", modelID),
-		zap.Bool("cacheEnabled", cacheEnabled),
+		zap.Bool("checkPermissionCacheEnabled", cacheEnabled),
+		zap.Bool("listPermissionsCacheEnabled", listPermissionsCacheOn),
 		zap.Duration("cacheTTL", cacheTTL),
+		zap.Duration("listObjectsDeadline", listObjectsCfg.Deadline),
+		zap.Int("listObjectsMaxResults", listObjectsCfg.MaxResults),
+		zap.Duration("listObjectsSlack", listObjectsCfg.Slack),
 	)
 
 	return &ACLClient{
-		writeClient:  wc,
-		readClient:   rc,
-		redisClient:  redisClient,
-		storeID:      storeID,
-		modelID:      modelID,
-		cacheEnabled: cacheEnabled,
-		cacheTTL:     cacheTTL,
-		config:       cfg,
+		writeClient:            wc,
+		readClient:             rc,
+		redisClient:            redisClient,
+		storeID:                storeID,
+		modelID:                modelID,
+		cacheEnabled:           cacheEnabled,
+		listPermissionsCacheOn: listPermissionsCacheOn,
+		cacheTTL:               cacheTTL,
+		listObjectsCfg:         listObjectsCfg,
+		config:                 cfg,
 	}
 }
 
@@ -328,7 +347,7 @@ func listPermissionsCacheKey(userType, userUID, objectType, role string) string 
 //	"acl:list:*:file:*"             — all list entries for object type "file"
 //	"acl:list:*"                    — everything (nuclear option, not used)
 func (c *ACLClient) invalidateListPermissionsCache(ctx context.Context, pattern string) {
-	if !c.cacheEnabled || c.redisClient == nil {
+	if !c.listPermissionsCacheOn || c.redisClient == nil {
 		return
 	}
 
@@ -519,6 +538,7 @@ func (c *ACLClient) Purge(ctx context.Context, objectType string, objectUID uuid
 //
 // Selection rules
 // ---------------
+//
 //  1. If `Instill-User-Uid` is non-empty, the caller is an
 //     authenticated user. The FGA subject is `user:{uuid}` regardless
 //     of `Instill-Auth-Type`, because all authenticated tuples in the
@@ -529,17 +549,17 @@ func (c *ACLClient) Purge(ctx context.Context, objectType string, objectUID uuid
 //     (`visitor` or `capability`) and `Instill-Visitor-Uid` is set,
 //     the caller is an anonymous visitor. Both labels collapse to
 //     FGA subject type `visitor` because:
-//       - The identity (the browser cookie visitor UID) is the same
-//         in both cases — the only difference is whether the request
-//         also carries a share-link capability token.
-//       - Per-resource share-link grants live in `share_link:{token}`
-//         tuples, not in `capability:{uid}` tuples; no backend code
-//         writes `capability:<...>` tuples, so emitting the label
-//         would produce an FGA subject with no possible match.
-//       - `capability` is an auth-mechanism signal ("how did this
-//         request authenticate?"), not an identity class ("who is
-//         asking?"). Keeping the two orthogonal avoids conflating
-//         token-holders with anonymous visitors in the FGA schema.
+//     - The identity (the browser cookie visitor UID) is the same
+//     in both cases — the only difference is whether the request
+//     also carries a share-link capability token.
+//     - Per-resource share-link grants live in `share_link:{token}`
+//     tuples, not in `capability:{uid}` tuples; no backend code
+//     writes `capability:<...>` tuples, so emitting the label
+//     would produce an FGA subject with no possible match.
+//     - `capability` is an auth-mechanism signal ("how did this
+//     request authenticate?"), not an identity class ("who is
+//     asking?"). Keeping the two orthogonal avoids conflating
+//     token-holders with anonymous visitors in the FGA schema.
 //     Callers that need to honour a capability token must read
 //     `Instill-Capability-Token-Uid` and call CheckShareLinkPermission
 //     explicitly.
@@ -801,7 +821,7 @@ func (c *ACLClient) listObjectsForSubject(ctx context.Context, objectType, role,
 
 	// --- Cache read ---
 	cacheKey := listPermissionsCacheKey(userType, userUIDStr, objectType, role)
-	if c.cacheEnabled && c.redisClient != nil && !forceConsistency {
+	if c.listPermissionsCacheOn && c.redisClient != nil && !forceConsistency {
 		cached, redisErr := c.redisClient.Get(ctx, cacheKey).Result()
 		if redisErr == nil {
 			var uidStrs []string
@@ -824,6 +844,7 @@ func (c *ACLClient) listObjectsForSubject(ctx context.Context, objectType, role,
 	}
 
 	// --- FGA call ---
+	startedAt := time.Now()
 	stream, err := c.getClient(ctx, ReadMode).StreamedListObjects(ctx, &openfga.StreamedListObjectsRequest{
 		StoreId:              c.storeID,
 		AuthorizationModelId: modelID,
@@ -852,9 +873,46 @@ func (c *ACLClient) listObjectsForSubject(ctx context.Context, objectType, role,
 		}
 		objectUIDs = append(objectUIDs, uuid.FromStringOrNil(strings.Split(resp.GetObject(), ":")[1]))
 	}
+	elapsed := time.Since(startedAt)
+
+	// --- Truncation guard ---
+	//
+	// OpenFGA's StreamedListObjects silently caps responses at the
+	// smaller of `listObjectsDeadline` (3s default) and
+	// `listObjectsMaxResults` (1000 default). When either ceiling is
+	// hit the stream ends with EOF carrying no error or marker, so a
+	// truncated reply is indistinguishable from a complete one at the
+	// gRPC layer. Caching such a reply propagates the missing tuples
+	// for the cache TTL and was the root cause of the 2026-04 "files
+	// disappeared from the workspace" incident.
+	//
+	// The heuristic flags the result as suspect when EITHER:
+	//   - elapsed time falls within Slack of the configured deadline
+	//     (the deadline branch fires before the max-results branch on
+	//     graphs with many transitively reachable objects), OR
+	//   - the result count is at or above the configured max
+	//
+	// On a hit we (a) refuse the cache write so the next read goes
+	// back to FGA and (b) increment the Prom counter so on-call can
+	// alert. The partial result is still returned to the caller — the
+	// alternative would break read paths that have legitimately small
+	// result sets but ran slowly under FGA load.
+	truncated := isLikelyTruncated(elapsed, len(objectUIDs), c.listObjectsCfg)
+	if truncated {
+		recordListObjectsTruncated(objectType, role)
+		log.Warn("StreamedListObjects result is likely truncated; refusing to cache",
+			zap.String("objectType", objectType),
+			zap.String("role", role),
+			zap.String("subject", fmt.Sprintf("%s:%s", userType, userUIDStr)),
+			zap.Duration("elapsed", elapsed),
+			zap.Duration("deadline", c.listObjectsCfg.Deadline),
+			zap.Int("returned", len(objectUIDs)),
+			zap.Int("maxResults", c.listObjectsCfg.MaxResults),
+		)
+	}
 
 	// --- Cache write ---
-	if c.cacheEnabled && c.redisClient != nil && !forceConsistency {
+	if c.listPermissionsCacheOn && c.redisClient != nil && !forceConsistency && !truncated {
 		uidStrs := make([]string, len(objectUIDs))
 		for i, u := range objectUIDs {
 			uidStrs[i] = u.String()
@@ -868,6 +926,88 @@ func (c *ACLClient) listObjectsForSubject(ctx context.Context, objectType, role,
 	}
 
 	return objectUIDs, nil
+}
+
+// ReadTuples enumerates direct-grant tuples that match the given
+// filter. Backed by OpenFGA's Read API rather than ListObjects /
+// StreamedListObjects because:
+//
+//   - Read is indexed and not subject to listObjectsDeadline /
+//     listObjectsMaxResults — there is no truncation guard to write.
+//   - Read returns the concrete tuple (object, relation, user)
+//     instead of just the resolved object set, which is what every
+//     caller wanting "who has direct access to X" actually needs.
+//   - Read paginates via continuation_token, which this method walks
+//     transparently so the caller never has to deal with paging.
+//
+// Callers that need transitively reachable objects (via FGA rewrites
+// such as `viewer ... or X from permission_parent`) must keep using
+// ListPermissions; Read only sees the raw tuples.
+func (c *ACLClient) ReadTuples(ctx context.Context, filter ReadTupleFilter) ([]ReadTuple, error) {
+	pageSize := filter.PageSize
+	if pageSize <= 0 {
+		pageSize = DefaultReadPageSize
+	}
+
+	tupleKey := &openfga.ReadRequestTupleKey{
+		Object:   filter.Object,
+		Relation: filter.Relation,
+		User:     filter.User,
+	}
+
+	var (
+		out               []ReadTuple
+		continuationToken string
+	)
+	for {
+		req := &openfga.ReadRequest{
+			StoreId:           c.storeID,
+			TupleKey:          tupleKey,
+			PageSize:          wrapperspb.Int32(pageSize),
+			ContinuationToken: continuationToken,
+		}
+		resp, err := c.getClient(ctx, ReadMode).Read(ctx, req)
+		if err != nil {
+			if statusErr, ok := status.FromError(err); ok {
+				if statusErr.Code() == codes.Code(openfga.ErrorCode_type_not_found) {
+					return out, nil
+				}
+			}
+			return nil, fmt.Errorf("reading tuples: %w", err)
+		}
+
+		for _, t := range resp.GetTuples() {
+			k := t.GetKey()
+			if k == nil {
+				continue
+			}
+			out = append(out, ReadTuple{
+				Object:   k.GetObject(),
+				Relation: k.GetRelation(),
+				User:     k.GetUser(),
+			})
+		}
+
+		continuationToken = resp.GetContinuationToken()
+		if continuationToken == "" {
+			break
+		}
+	}
+	return out, nil
+}
+
+// isLikelyTruncated implements the heuristic documented inline at the
+// caller. Pulled out so unit tests can exercise the threshold matrix
+// without spinning a full mock stream.
+func isLikelyTruncated(elapsed time.Duration, returned int, cfg ListObjectsConfig) bool {
+	cfg = cfg.resolved()
+	if cfg.Deadline > 0 && elapsed >= cfg.Deadline-cfg.Slack {
+		return true
+	}
+	if cfg.MaxResults > 0 && returned >= cfg.MaxResults {
+		return true
+	}
+	return false
 }
 
 // GetStoreID returns the OpenFGA store ID.
