@@ -70,6 +70,39 @@ const PermissionCachePrefix = "acl:perm:"
 // per (user, objectType, role) and stores a list of object UIDs.
 const ListPermissionsCachePrefix = "acl:list:"
 
+// ReadTupleFilter selects which tuples ReadTuples enumerates. The
+// fields map 1:1 onto OpenFGA's ReadRequestTupleKey: any combination
+// of object, relation, and user is valid, including a partial filter
+// that names only one (e.g. Object="file:<uid>" returns every direct
+// grant on that file across every user and relation).
+//
+// PageSize bounds the per-RPC fetch; ReadTuples internally pages
+// through continuation tokens and returns the concatenated result, so
+// callers do not have to deal with pagination. Zero / negative values
+// fall back to DefaultReadPageSize.
+type ReadTupleFilter struct {
+	Object   string // FGA object string, e.g. "file:<uid>" or "" for any.
+	Relation string // FGA relation, e.g. "viewer" or "" for any.
+	User     string // FGA subject string, e.g. "user:<uid>" or "" for any.
+	PageSize int32  // Per-RPC page size; 0 → DefaultReadPageSize.
+}
+
+// ReadTuple is the materialised representation of an FGA tuple
+// returned by ReadTuples. The shape mirrors openfga.Tuple but lives
+// in this package so callers do not need to import the OpenFGA proto
+// directly.
+type ReadTuple struct {
+	Object   string
+	Relation string
+	User     string
+}
+
+// DefaultReadPageSize is the per-RPC page size used by ReadTuples
+// when the caller leaves PageSize unset. Chosen to balance round-trip
+// count against per-response payload size; the OpenFGA Read API
+// permits up to 100 by default.
+const DefaultReadPageSize int32 = 100
+
 type contextKeyType string
 
 // ContextKeyForceHigherConsistency is a context key that, when set to true,
