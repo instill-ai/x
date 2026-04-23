@@ -1,48 +1,65 @@
 package acl
 
 import (
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
+	"context"
+	"sync"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
-// listObjectsTruncatedTotal counts every StreamedListObjects response
-// that the truncation guard flagged as likely-truncated. The counter
-// is exposed under the canonical name `acl_list_objects_truncated_total`
-// so dashboards and alerts can be wired against it without the caller
-// having to import the symbol.
+// instrumentationName is the OTel meter scope under which x/acl
+// instruments are registered. Stable across versions because dashboards
+// and alerts in the OTel collector are keyed on it.
+const instrumentationName = "github.com/instill-ai/x/acl"
+
+// Lazy-initialised so the counter binds to whichever MeterProvider has
+// been installed by the consumer service's `otel.SetupMetrics` call.
+// init()-time creation would bind permanently to the no-op provider
+// because x/acl is imported before main() runs SetupMetrics.
+var (
+	truncCounterOnce sync.Once
+	truncCounter     metric.Int64Counter
+)
+
+// recordListObjectsTruncated bumps the truncation counter for the given
+// (object_type, relation) pair. Wrapped so the call site does not have
+// to import OTel; the lazy init keeps the call cheap (single atomic
+// load on the hot path after first use) and survives a no-op global
+// MeterProvider when running under tests that never wire one up.
 //
-// Labels:
+// Counter name: `acl.list_objects_truncated` (OTel snake-case style;
+// the collector remaps to `acl_list_objects_truncated_total` for any
+// Prometheus exporter wired downstream of the collector).
+//
+// Attributes:
 //
 //   - object_type — the FGA object type (e.g. "file", "collection").
 //     Bounded cardinality: matches the FGA schema, currently <20 types.
-//   - role        — the relation queried (e.g. "viewer", "executor").
+//   - relation    — the relation queried (e.g. "viewer", "executor").
 //     Bounded cardinality: matches the relations defined per type.
-//
-// The counter is intentionally registered against the default
-// Prometheus registry. Services that scrape /metrics from the default
-// registry pick it up with no extra wiring; services that use a custom
-// registry must wrap promhttp.HandlerFor with the default registry as
-// well, or expose this counter by calling ListObjectsTruncatedTotal()
-// during their own collector wiring.
-var listObjectsTruncatedTotal = promauto.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "acl_list_objects_truncated_total",
-		Help: "Number of StreamedListObjects responses flagged as likely-truncated by the x/acl truncation guard. A non-zero value means OpenFGA's listObjectsDeadline / listObjectsMaxResults capped a response that the caller asked to enumerate; cache writes were skipped for those responses to prevent stale data propagation.",
-	},
-	[]string{"object_type", "role"},
-)
-
-// recordListObjectsTruncated bumps the truncation counter for the
-// given (object_type, role) pair. Wrapped in a helper so callers do
-// not need to import prometheus directly.
-func recordListObjectsTruncated(objectType, role string) {
-	listObjectsTruncatedTotal.WithLabelValues(objectType, role).Inc()
-}
-
-// ListObjectsTruncatedTotal returns the underlying CounterVec so that
-// services using a custom Prometheus registry can register it
-// themselves. Tests use this to read the counter value via the
-// testutil package.
-func ListObjectsTruncatedTotal() *prometheus.CounterVec {
-	return listObjectsTruncatedTotal
+func recordListObjectsTruncated(ctx context.Context, objectType, relation string) {
+	truncCounterOnce.Do(func() {
+		c, err := otel.Meter(instrumentationName).Int64Counter(
+			"acl.list_objects_truncated",
+			metric.WithDescription("Number of StreamedListObjects responses flagged as likely-truncated by the x/acl truncation guard. A non-zero value means OpenFGA's listObjectsDeadline / listObjectsMaxResults capped a response that the caller asked to enumerate; cache writes were skipped for those responses to prevent stale data propagation."),
+			metric.WithUnit("1"),
+		)
+		if err != nil {
+			// Defensive: never break the call site over telemetry. The
+			// truncation log line in client.go already carries the
+			// operational signal; the counter is only there to make
+			// alerts cheap.
+			return
+		}
+		truncCounter = c
+	})
+	if truncCounter == nil {
+		return
+	}
+	truncCounter.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("object_type", objectType),
+		attribute.String("relation", relation),
+	))
 }

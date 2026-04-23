@@ -17,7 +17,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	openfga "github.com/openfga/api/proto/openfga/v1"
-	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/instill-ai/x/constant"
 	errorsx "github.com/instill-ai/x/errors"
@@ -2537,14 +2536,21 @@ func TestIsLikelyTruncated_DefaultsFillFromZeroConfig(t *testing.T) {
 // TestListPermissions_TruncationGuard_DeadlineBranch_RefusesCacheWrite
 // drives listObjectsForSubject through a mock stream that sleeps once
 // past the deadline-slack boundary so the elapsed-time branch fires.
-// Asserts: (a) the partial result is still returned to the caller,
-// (b) no Redis cache entry is written, (c) the truncation counter
-// increments by exactly one.
+// Asserts the user-visible contract: (a) the partial result is still
+// returned to the caller, (b) no Redis cache entry is written, (c) a
+// follow-up ListPermissions hits FGA again instead of being served
+// from a poisoned cache. The OTel counter
+// (`acl.list_objects_truncated`) is fired as a side effect; we do not
+// assert on it here because the cache-miss-on-next-call behavior is
+// the actual stale-data-prevention contract — telemetry is the
+// alerting surface, not the contract surface.
 func TestListPermissions_TruncationGuard_DeadlineBranch_RefusesCacheWrite(t *testing.T) {
 	uid1 := uuid.Must(uuid.NewV4())
 
+	fgaCalls := 0
 	fga := &mockFGA{
 		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
 			return &slowStream{
 				items: []*openfga.StreamedListObjectsResponse{
 					{Object: fmt.Sprintf("file:%s", uid1)},
@@ -2561,7 +2567,6 @@ func TestListPermissions_TruncationGuard_DeadlineBranch_RefusesCacheWrite(t *tes
 		Slack:      0,
 	}
 
-	beforeCount := readTruncationCounter(t, "file", "reader")
 	uids, err := c.ListPermissions(userCtx(testUserUID), "file", "reader")
 	if err != nil {
 		t.Fatalf("partial result must still be returned, got error: %v", err)
@@ -2575,9 +2580,12 @@ func TestListPermissions_TruncationGuard_DeadlineBranch_RefusesCacheWrite(t *tes
 		t.Error("truncated result must NOT be cached (cache key was written)")
 	}
 
-	afterCount := readTruncationCounter(t, "file", "reader")
-	if afterCount-beforeCount != 1 {
-		t.Errorf("truncation counter should increment by 1, got delta %v", afterCount-beforeCount)
+	// Second call must re-issue FGA, not serve a poisoned cache.
+	if _, err := c.ListPermissions(userCtx(testUserUID), "file", "reader"); err != nil {
+		t.Fatalf("follow-up call should succeed: %v", err)
+	}
+	if fgaCalls != 2 {
+		t.Errorf("follow-up call must hit FGA again (cache must not be served), got %d FGA calls", fgaCalls)
 	}
 }
 
@@ -2586,7 +2594,9 @@ func TestListPermissions_TruncationGuard_DeadlineBranch_RefusesCacheWrite(t *tes
 // MaxResults items must also be flagged as truncated and skip the
 // cache write. This is the branch that fires on workspaces with
 // thousands of files where the deadline is never approached but the
-// max-results ceiling is hit silently.
+// max-results ceiling is hit silently. Same contract assertion shape
+// as the deadline branch — partial result returned, no cache, second
+// call re-hits FGA.
 func TestListPermissions_TruncationGuard_MaxResultsBranch(t *testing.T) {
 	maxResults := 5
 	items := make([]*openfga.StreamedListObjectsResponse, maxResults)
@@ -2596,8 +2606,10 @@ func TestListPermissions_TruncationGuard_MaxResultsBranch(t *testing.T) {
 		}
 	}
 
+	fgaCalls := 0
 	fga := &mockFGA{
 		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
 			return &mockStream{items: items}, nil
 		},
 	}
@@ -2609,7 +2621,6 @@ func TestListPermissions_TruncationGuard_MaxResultsBranch(t *testing.T) {
 		Slack:      200 * time.Millisecond,
 	}
 
-	beforeCount := readTruncationCounter(t, "file", "reader")
 	uids, err := c.ListPermissions(userCtx(testUserUID), "file", "reader")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2623,24 +2634,29 @@ func TestListPermissions_TruncationGuard_MaxResultsBranch(t *testing.T) {
 		t.Error("max-results-capped result must NOT be cached")
 	}
 
-	afterCount := readTruncationCounter(t, "file", "reader")
-	if afterCount-beforeCount != 1 {
-		t.Errorf("truncation counter should increment by 1, got delta %v", afterCount-beforeCount)
+	if _, err := c.ListPermissions(userCtx(testUserUID), "file", "reader"); err != nil {
+		t.Fatalf("follow-up call should succeed: %v", err)
+	}
+	if fgaCalls != 2 {
+		t.Errorf("follow-up call must hit FGA again (cache must not be served), got %d FGA calls", fgaCalls)
 	}
 }
 
-// TestListPermissions_TruncationGuard_HappyPath_CachesAndDoesNotIncrement
+// TestListPermissions_TruncationGuard_HappyPath_CachesAndServesCachedResult
 // covers the negative case: a stream that completes well below both
-// ceilings must populate the cache and leave the truncation counter
-// untouched. Without this test a misconfigured Deadline / MaxResults
-// (e.g. zero values) could silently turn every list call into a
-// truncation event and drop cache hit rate to 0.
-func TestListPermissions_TruncationGuard_HappyPath_CachesAndDoesNotIncrement(t *testing.T) {
+// ceilings must populate the cache, and a follow-up call must be
+// served from cache without re-issuing FGA. Without this test a
+// misconfigured Deadline / MaxResults (e.g. zero values) could
+// silently turn every list call into a truncation event and drop
+// cache hit rate to 0.
+func TestListPermissions_TruncationGuard_HappyPath_CachesAndServesCachedResult(t *testing.T) {
 	uid1 := uuid.Must(uuid.NewV4())
 	uid2 := uuid.Must(uuid.NewV4())
 
+	fgaCalls := 0
 	fga := &mockFGA{
 		streamedListObjectsFn: func(_ context.Context, _ *openfga.StreamedListObjectsRequest) (openfga.OpenFGAService_StreamedListObjectsClient, error) {
+			fgaCalls++
 			return &mockStream{items: []*openfga.StreamedListObjectsResponse{
 				{Object: fmt.Sprintf("file:%s", uid1)},
 				{Object: fmt.Sprintf("file:%s", uid2)},
@@ -2655,7 +2671,6 @@ func TestListPermissions_TruncationGuard_HappyPath_CachesAndDoesNotIncrement(t *
 		Slack:      200 * time.Millisecond,
 	}
 
-	beforeCount := readTruncationCounter(t, "file", "reader")
 	uids, err := c.ListPermissions(userCtx(testUserUID), "file", "reader")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2669,19 +2684,12 @@ func TestListPermissions_TruncationGuard_HappyPath_CachesAndDoesNotIncrement(t *
 		t.Error("complete result must be cached")
 	}
 
-	afterCount := readTruncationCounter(t, "file", "reader")
-	if afterCount != beforeCount {
-		t.Errorf("truncation counter must not move on a complete response, got delta %v", afterCount-beforeCount)
+	if _, err := c.ListPermissions(userCtx(testUserUID), "file", "reader"); err != nil {
+		t.Fatalf("follow-up call should succeed: %v", err)
 	}
-}
-
-// readTruncationCounter samples the listObjectsTruncatedTotal Prom
-// counter for the given (object_type, role) label set. Pulled into a
-// helper so the truncation tests do not need to import promtestutil
-// each time.
-func readTruncationCounter(t *testing.T, objectType, role string) float64 {
-	t.Helper()
-	return promtestutil.ToFloat64(listObjectsTruncatedTotal.WithLabelValues(objectType, role))
+	if fgaCalls != 1 {
+		t.Errorf("follow-up call must be served from cache, got %d FGA calls", fgaCalls)
+	}
 }
 
 // ============================================================
