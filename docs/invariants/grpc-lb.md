@@ -80,6 +80,16 @@ The `grpc-proxy` plugin creates a fresh `http2.Transport` + `http.Client`
 inside each request handler invocation. This prevents Go's transport
 connection pool from pinning all proxied traffic to a single pod.
 
+### HTTP/1.1 SSE & WebSocket proxies
+
+The SSE streaming plugins (`pipeline-sse-streaming`, `model-sse-streaming`,
+and their EE counterparts `agent-sse-streaming`, `agent-websocket`) use
+HTTP/1.1 to proxy to backend pods. Each request handler creates a fresh
+`http.Transport` with `DisableKeepAlives: true`. Without this, Go's
+default transport pools connections per-host, pinning all SSE/WS traffic
+from the gateway to whichever pod was first resolved — the same class of
+bug as the HTTP/2 proxy case above.
+
 ### Helm charts
 
 Each backend (artifact, pipeline, model, mgmt) has a headless sibling
