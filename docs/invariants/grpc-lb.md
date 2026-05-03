@@ -80,6 +80,24 @@ The `grpc-proxy` plugin creates a fresh `http2.Transport` + `http.Client`
 inside each request handler invocation. This prevents Go's transport
 connection pool from pinning all proxied traffic to a single pod.
 
+### HTTP/1.1 REST proxy (`api-gateway/plugins/http-no-pool/client.go`)
+
+The `http-no-pool` plugin is the HTTP/1.1 counterpart of `grpc-proxy`.
+KrakenD's default HTTP backend proxy pools connections per-host
+(`http.Transport` with keep-alive), pinning all REST requests to the same
+pod for the pool's lifetime. This affects all `http_auth` and `no_auth`
+endpoints: knowledge-bases, models, user profiles, health checks, etc.
+
+The `http-no-pool-client` plugin replaces the pooled transport with a
+per-request `http.Transport` (`DisableKeepAlives: true`). Each request
+opens a fresh TCP connection; kube-proxy routes it to a randomly-selected
+pod from the Service's endpoint set — including pods added by HPA
+mid-test.
+
+Applied via `"plugin/http-client"` in every `http_auth` and `no_auth`
+backend block in the KrakenD templates (same location as `grpc-proxy-client`
+in `grpc_auth` / `grpc_no_auth` blocks).
+
 ### HTTP/1.1 SSE & WebSocket proxies
 
 The SSE streaming plugins (`pipeline-sse-streaming`, `model-sse-streaming`,
