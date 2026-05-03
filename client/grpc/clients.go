@@ -147,6 +147,12 @@ func NewClient[T any](options ...Option) (T, func() error, error) {
 	return NewUnregisteredClient[T](typeName, info.creator, info.isPublic, options...)
 }
 
+// roundRobinSvcConfig configures gRPC to use round-robin load balancing
+// across all resolved endpoints. Without this, gRPC defaults to pick_first,
+// which pins all RPCs to a single backend pod over one HTTP/2 connection —
+// defeating Kubernetes HPA scaling entirely.
+const roundRobinSvcConfig = `{"loadBalancingConfig":[{"round_robin":{}}]}`
+
 func newConn(host string, port int, opts *Options) (conn *grpc.ClientConn, err error) {
 	// Build dial options using the provided options
 	dialOpts, err := NewClientOptionsAndCreds(
@@ -173,7 +179,15 @@ func newConn(host string, port int, opts *Options) (conn *grpc.ClientConn, err e
 		dialOpts = append(dialOpts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
 	}
 
-	conn, err = grpc.NewClient(fmt.Sprintf("%s:%d", host, port), dialOpts...)
+	dialOpts = append(dialOpts, grpc.WithDefaultServiceConfig(roundRobinSvcConfig))
+
+	// dns:/// resolver enables gRPC-native DNS resolution which returns all
+	// A records (pod IPs behind a headless K8s Service). Combined with
+	// round_robin above, RPCs are distributed across every ready pod instead
+	// of being pinned to whichever pod kube-proxy picked at connect time.
+	target := fmt.Sprintf("dns:///%s:%d", host, port)
+
+	conn, err = grpc.NewClient(target, dialOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("creating client connection: %w", err)
 	}

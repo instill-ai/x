@@ -530,8 +530,8 @@ func (c *ACLClient) Purge(ctx context.Context, objectType string, objectUID uuid
 // signed-in reader viewing a `/r/{token}` share link) became real:
 // the gateway stamps `Instill-Auth-Type: capability` together with a
 // non-empty `Instill-User-Uid` (and no visitor UID, because visitor
-// UIDs are only minted when the user UID is empty — see
-// api-gateway-ee's authenticateCapabilityToken). The else-branch then
+// UIDs are only minted when the user UID is empty in the gateway's
+// capability-token authenticator). The else-branch then
 // read an empty visitor UID and every ACL check surfaced as
 // `unauthenticated: userUID is empty in check permission`, 401'ing
 // core flows such as `CreateChat` on `/r/{token}`.
@@ -1270,10 +1270,10 @@ func (c *ACLClient) CheckShareLinkPermission(ctx context.Context, shareToken str
 // exactly one FGA subject, so a request that authenticates with BOTH
 // a visitor cookie AND a share-link cap-token can only exercise ONE
 // side of the graph per call. Making callers do two checks by hand
-// has caused real bugs — most visibly artifact-backend-ee's linked
-// -file download path, which checked only the visitor subject and
-// silently 404'd every valid share-link download even though the
-// FGA `file.viewer → viewer from parent_collection → share_link:<T>`
+// has caused real bugs — e.g. a linked-file download path that
+// checked only the visitor subject and silently 404'd every valid
+// share-link download even though the FGA
+// `file.viewer → viewer from parent_collection → share_link:<T>`
 // chain resolved true.
 //
 // Semantics
@@ -1309,9 +1309,8 @@ func (c *ACLClient) CheckShareLinkPermission(ctx context.Context, shareToken str
 // Caller responsibility
 // ---------------------
 // Callers must extract `shareToken` from their domain-specific
-// header (x-ee's HeaderCapabilityTokenUIDKey) and pass it here. The
-// x library deliberately avoids the EE-header dependency so the
-// two packages do not cycle.
+// header and pass it here. This library deliberately avoids the
+// downstream-header dependency so the two packages do not cycle.
 func (c *ACLClient) CheckPermissionWithShareLink(
 	ctx context.Context, objectType string, objectUID uuid.UUID, relation string, shareToken string,
 ) (bool, error) {

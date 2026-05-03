@@ -126,28 +126,13 @@ The cache is automatically invalidated when:
 
 ## Object Types
 
-### CE (Community Edition) - `github.com/instill-ai/x/acl`
-
-Core object types:
+This package (`github.com/instill-ai/x/acl`) defines the core object types:
 
 - `ObjectTypePipeline` - Pipeline resources
 - `ObjectTypeModel` - Model resources
 - `ObjectTypeKnowledgeBase` - Knowledge base resources
 
-### EE (Enterprise Edition) - `github.com/instill-ai/x-ee/acl`
-
-Agent-specific object types (in addition to CE types):
-
-- `ObjectTypeChat` - Chat resources
-- `ObjectTypeCollection` - Collection resources
-- `ObjectTypeProject` - Project resources
-- `ObjectTypeRow` - Row resources
-- `ObjectTypeColumn` - Column resources
-- `ObjectTypeCell` - Cell resources
-- `ObjectTypeFile` - File resources
-- `ObjectTypeGroup` - Group resources
-
-The EE package re-exports CE types for convenience.
+Downstream consumers may extend this set with additional object types in their own ACL packages.
 
 ## Roles
 

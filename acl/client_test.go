@@ -2744,9 +2744,9 @@ func TestReadTuples_PropagatesFilterAndReturnsTuples(t *testing.T) {
 // continuation token, ReadTuples must follow it transparently and
 // return the concatenated result. Callers building "list everyone
 // with direct access" UIs depend on this so they do not have to
-// reimplement paging at every call site (which is what the original
-// console-ee anti-pattern did at the SDK layer, just on the wrong
-// API).
+// reimplement paging at every call site (a real anti-pattern that
+// reproduced at the SDK layer of a downstream consumer, where the
+// caller invoked the wrong API and missed paginated tuples).
 func TestReadTuples_WalksContinuationToken(t *testing.T) {
 	page := 0
 	fga := &mockFGA{

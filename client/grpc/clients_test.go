@@ -626,6 +626,23 @@ func TestNewClient_AllClientTypes(t *testing.T) {
 	}
 }
 
+func TestNewConn_UsesDNSResolverAndRoundRobin(t *testing.T) {
+	qt := quicktest.New(t)
+
+	svc := createTestServiceConfig("my-service-headless", 8080, 8081)
+	opts := &Options{
+		ServiceConfig: svc,
+	}
+
+	conn, err := newConn("my-service-headless", 8080, opts)
+	qt.Assert(err, quicktest.IsNil)
+	qt.Assert(conn, quicktest.Not(quicktest.IsNil))
+	defer func() { _ = conn.Close() }()
+
+	target := conn.Target()
+	qt.Check(target, quicktest.Equals, "dns:///my-service-headless:8080")
+}
+
 func TestNewClient_OptionsPattern(t *testing.T) {
 	// Create mock server
 	server, port := createTestGRPCServer(t)
