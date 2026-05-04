@@ -181,11 +181,12 @@ func newConn(host string, port int, opts *Options) (conn *grpc.ClientConn, err e
 
 	dialOpts = append(dialOpts, grpc.WithDefaultServiceConfig(roundRobinSvcConfig))
 
-	// dns:/// resolver enables gRPC-native DNS resolution which returns all
-	// A records (pod IPs behind a headless K8s Service). Combined with
-	// round_robin above, RPCs are distributed across every ready pod instead
-	// of being pinned to whichever pod kube-proxy picked at connect time.
-	target := fmt.Sprintf("dns:///%s:%d", host, port)
+	// dns-refresh:/// resolver periodically re-resolves DNS A records so that
+	// newly HPA-scaled pods behind a headless K8s Service are discovered within
+	// one refresh cycle. The built-in dns:/// resolver only re-resolves on
+	// subchannel failure, so pods added after the initial dial are invisible.
+	dialOpts = append(dialOpts, grpc.WithResolvers(PeriodicDNSResolverBuilder(DefaultDNSRefreshInterval)))
+	target := fmt.Sprintf("%s:///%s:%d", DNSRefreshScheme, host, port)
 
 	conn, err = grpc.NewClient(target, dialOpts...)
 	if err != nil {

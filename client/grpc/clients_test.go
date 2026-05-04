@@ -640,7 +640,7 @@ func TestNewConn_UsesDNSResolverAndRoundRobin(t *testing.T) {
 	defer func() { _ = conn.Close() }()
 
 	target := conn.Target()
-	qt.Check(target, quicktest.Equals, "dns:///my-service-headless:8080")
+	qt.Check(target, quicktest.Equals, DNSRefreshScheme+":///my-service-headless:8080")
 }
 
 func TestNewClient_OptionsPattern(t *testing.T) {

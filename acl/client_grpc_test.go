@@ -11,7 +11,7 @@ func TestInitOpenFGAClient_DNSTarget(t *testing.T) {
 	defer func() { _ = conn.Close() }()
 
 	target := conn.Target()
-	if !strings.HasPrefix(target, "dns:///") {
-		t.Fatalf("expected dns:/// prefix, got target=%q", target)
+	if !strings.HasPrefix(target, "dns-refresh:///") {
+		t.Fatalf("expected dns-refresh:/// prefix, got target=%q", target)
 	}
 }
