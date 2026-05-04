@@ -108,15 +108,21 @@ default transport pools connections per-host, pinning all SSE/WS traffic
 from the gateway to whichever pod was first resolved — the same class of
 bug as the HTTP/2 proxy case above.
 
-### Helm charts
+### Helm charts — Service type split
 
-Each backend (artifact, pipeline, model, mgmt) has a headless sibling
-Service named `{backend}-headless` alongside the existing ClusterIP
-Service. Backend configmaps and the api-gateway configmap reference the
-headless service name for all gRPC/HTTP2 backend hosts.
+Each backend (artifact, pipeline, model, mgmt) has both a regular
+ClusterIP Service and a headless sibling (`{backend}-headless`).
 
-The ClusterIP Service is retained for non-gRPC consumers (health checks,
-init containers) that only need to reach any healthy pod.
+**The api-gateway uses them differently per protocol:**
+
+| Protocol | Config source | K8s Service type | LB mechanism |
+|----------|--------------|-----------------|--------------|
+| gRPC (`grpc-proxy-client`) | `plugins.json` → `*_BACKEND_HOST` | Headless | `dns:///` + `round_robin` (client-side) |
+| HTTP/1.1 (`http-no-pool-client`) | `backends.json` → `*_BACKEND_HTTP_HOST` | ClusterIP | kube-proxy DNAT (per-connection) |
+
+The `envsubst.sh` script derives `*_BACKEND_HTTP_HOST` by stripping the
+`-headless` suffix from `*_BACKEND_HOST`. For Docker Compose (where
+hostnames never carry `-headless`), the stripping is a no-op.
 
 ## Docker Compose compatibility
 
