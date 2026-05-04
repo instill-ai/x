@@ -18,6 +18,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	openfga "github.com/openfga/api/proto/openfga/v1"
+
+	xgrpc "github.com/instill-ai/x/client/grpc"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/instill-ai/x/constant"
@@ -162,8 +164,9 @@ func InitOpenFGAClient(ctx context.Context, host string, port int, maxDataSize i
 
 	const MB = 1024 * 1024
 	clientConn, err := grpc.NewClient(
-		fmt.Sprintf("dns:///%v:%v", host, port),
+		fmt.Sprintf("%s:///%v:%v", xgrpc.DNSRefreshScheme, host, port),
 		clientDialOpts,
+		grpc.WithResolvers(xgrpc.PeriodicDNSResolverBuilder(xgrpc.DefaultDNSRefreshInterval)),
 		grpc.WithDefaultServiceConfig(`{"loadBalancingConfig":[{"round_robin":{}}]}`),
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallRecvMsgSize(maxDataSize*MB),
