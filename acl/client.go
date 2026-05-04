@@ -162,8 +162,9 @@ func InitOpenFGAClient(ctx context.Context, host string, port int, maxDataSize i
 
 	const MB = 1024 * 1024
 	clientConn, err := grpc.NewClient(
-		fmt.Sprintf("%v:%v", host, port),
+		fmt.Sprintf("dns:///%v:%v", host, port),
 		clientDialOpts,
+		grpc.WithDefaultServiceConfig(`{"loadBalancingConfig":[{"round_robin":{}}]}`),
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallRecvMsgSize(maxDataSize*MB),
 			grpc.MaxCallSendMsgSize(maxDataSize*MB),

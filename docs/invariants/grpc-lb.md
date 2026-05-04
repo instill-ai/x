@@ -70,9 +70,25 @@ These must apply the same two options manually:
 | api-gateway `registry` plugin | `plugins/registry/external.go` |
 | pipeline-backend `instillartifact` component | `pkg/component/data/instillartifact/v0/client.go` |
 | pipeline-backend `instillmodel` component | `pkg/component/ai/instillmodel/v0/client.go` |
+| agent-backend-ee `llmworker` client | `pkg/grpc/llmworker/client.go` |
 
 Downstream consumers that maintain their own gRPC client construction
 outside of `x/client` must also apply `dns:///` + `round_robin` manually.
+
+### OpenFGA gRPC client (`x/acl/client.go`)
+
+`InitOpenFGAClient` creates the gRPC connection used by every backend
+(artifact, pipeline, model, agent) for authorization checks. It uses
+`dns:///` + `round_robin` targeting the headless OpenFGA Service so that
+authorization RPCs are distributed across all OpenFGA pods.
+
+### mgmt-backend OpenFGA HTTP client
+
+mgmt-backend communicates with OpenFGA over HTTP REST (port 8080), not
+gRPC. It uses the `openfga/go-sdk` with a custom `http.Client` whose
+transport has `DisableKeepAlives: true`, forcing a fresh TCP connection
+per request. kube-proxy DNAT distributes these connections across
+OpenFGA pods via the regular ClusterIP Service.
 
 ### HTTP/2 proxy (`api-gateway/plugins/grpc-proxy/client.go`)
 
@@ -112,6 +128,7 @@ bug as the HTTP/2 proxy case above.
 
 Each backend (artifact, pipeline, model, mgmt) has both a regular
 ClusterIP Service and a headless sibling (`{backend}-headless`).
+OpenFGA and llmworker also have headless siblings for gRPC callers.
 
 **The api-gateway uses them differently per protocol:**
 
@@ -137,8 +154,7 @@ To verify no new gRPC client bypasses this contract:
 ```shell
 rg 'grpc\.(NewClient|Dial)\(' --glob '*.go' \
   | rg -v 'dns:///' \
-  | rg -v '_test\.go' \
-  | rg -v 'openfga'
+  | rg -v '_test\.go'
 ```
 
 Any hit that is a new inter-service call must add `dns:///` + `round_robin`.
