@@ -4,7 +4,7 @@
 
 Every gRPC connection from one Instill backend to another MUST use:
 
-1. The `dns:///` resolver prefix (not `passthrough:///` or bare `host:port`)
+1. The `dns-refresh:///` resolver (not `dns:///`, `passthrough:///`, or bare `host:port`)
 2. A `round_robin` load balancing policy via `grpc.WithDefaultServiceConfig`
 3. A headless Kubernetes Service as the target (in K8s deployments)
 
@@ -30,14 +30,32 @@ sit idle. Worse, the HPA's average-CPU metric is diluted by the idle pods,
 so it thinks the service is healthy and stops scaling. The Cluster
 Autoscaler never provisions new nodes because there are no pending pods.
 
+### Why `dns-refresh:///` instead of `dns:///`
+
+The built-in gRPC `dns:///` resolver only re-resolves DNS when a subchannel
+enters TRANSIENT_FAILURE — i.e., when an existing connection breaks. It does
+**not** periodically poll DNS. This means that when HPA scales from 1 to N
+pods, a healthy client with an active connection to the original pod will
+**never** discover the new pods. All RPCs remain pinned to the original pod
+indefinitely, defeating both HPA and round_robin.
+
+The `dns-refresh:///` resolver (implemented in `x/client/grpc/resolver.go`)
+solves this by periodically (every 30s) performing DNS A-record lookups and
+pushing the full address list to the gRPC balancer. When HPA adds pods, the
+resolver discovers them within one refresh cycle and `round_robin` opens
+subchannels to them.
+
 ## How it works
 
 1. **Headless Service** (`clusterIP: None`): DNS returns A records for
    every ready pod IP, not a single virtual IP.
 
-2. **`dns:///` resolver**: gRPC's built-in DNS resolver performs periodic
-   re-resolution (default 30 min, configurable via `dns_min_time_between_resolutions_ms`
-   channel arg). On each resolution, it discovers all pod IPs.
+2. **`dns-refresh:///` resolver** (`x/client/grpc/resolver.go`): Custom gRPC
+   resolver that periodically (every 30s) looks up DNS A records via
+   `net.DefaultResolver.LookupHost` and pushes updated addresses to the gRPC
+   client connection via `resolver.ClientConn.UpdateState`. Unlike the built-in
+   `dns:///` resolver, this discovers newly scaled pods without requiring a
+   connection failure.
 
 3. **`round_robin` policy**: gRPC opens a subchannel to each resolved
    address and distributes RPCs across them in round-robin order.
@@ -48,20 +66,37 @@ Autoscaler never provisions new nodes because there are no pending pods.
    on each resolution, distributing traffic across replicas.
 
 Together, these pieces ensure that when HPA adds pods, both gRPC clients
-and HTTP/2 proxies distribute traffic to them.
+and HTTP/2 proxies distribute traffic to them within 30 seconds.
 
 ## Where the fix lives
 
 ### Shared library (`x/client/grpc/clients.go`)
 
-The `newConn()` function applies `dns:///` and `round_robin` to all
+The `newConn()` function applies `dns-refresh:///` + `round_robin` to all
 connections created via `grpc.NewClient[T]()`. Every backend that uses
 `x/client` for inter-service gRPC calls inherits this behavior
-automatically.
+automatically — including pipeline-backend, artifact-backend, model-backend,
+mgmt-backend, and agent-backend.
+
+### Periodic DNS resolver (`x/client/grpc/resolver.go`)
+
+`PeriodicDNSResolverBuilder` returns a `resolver.Builder` registered under
+the `dns-refresh` scheme. Usage:
+
+```go
+grpc.NewClient("dns-refresh:///my-headless-svc:8091",
+    grpc.WithResolvers(xgrpc.PeriodicDNSResolverBuilder(xgrpc.DefaultDNSRefreshInterval)),
+    grpc.WithDefaultServiceConfig(`{"loadBalancingConfig":[{"round_robin":{}}]}`),
+)
+```
+
+The resolver performs `net.DefaultResolver.LookupHost` on Build (immediate)
+and every 30s thereafter. Each lookup pushes the full address set to the
+balancer, so `round_robin` opens subchannels to newly HPA-scaled pods.
 
 ### Standalone gRPC callers (not using `x/client`)
 
-These must apply the same two options manually:
+These must apply `dns-refresh:///` + `round_robin` + `WithResolvers` manually:
 
 | Caller | File |
 |--------|------|
@@ -73,14 +108,14 @@ These must apply the same two options manually:
 | agent-backend-ee `llmworker` client | `pkg/grpc/llmworker/client.go` |
 
 Downstream consumers that maintain their own gRPC client construction
-outside of `x/client` must also apply `dns:///` + `round_robin` manually.
+outside of `x/client` must also apply the same pattern.
 
 ### OpenFGA gRPC client (`x/acl/client.go`)
 
 `InitOpenFGAClient` creates the gRPC connection used by every backend
 (artifact, pipeline, model, agent) for authorization checks. It uses
-`dns:///` + `round_robin` targeting the headless OpenFGA Service so that
-authorization RPCs are distributed across all OpenFGA pods.
+`dns-refresh:///` + `round_robin` targeting the headless OpenFGA Service so
+that authorization RPCs are distributed across all OpenFGA pods.
 
 ### mgmt-backend OpenFGA HTTP client
 
@@ -153,11 +188,13 @@ To verify no new gRPC client bypasses this contract:
 
 ```shell
 rg 'grpc\.(NewClient|Dial)\(' --glob '*.go' \
+  | rg -v 'dns-refresh:///' \
   | rg -v 'dns:///' \
   | rg -v '_test\.go'
 ```
 
-Any hit that is a new inter-service call must add `dns:///` + `round_robin`.
+Any hit that is a new inter-service call must add `dns-refresh:///` +
+`round_robin` + `WithResolvers(PeriodicDNSResolverBuilder(...))`.
 
 ## Anchored by 2026-05-03 incident
 
